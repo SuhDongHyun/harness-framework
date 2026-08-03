@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+
+# Personal Codex Harness runtime artifacts
+.harness/runs/

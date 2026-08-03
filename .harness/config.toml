@@ -1,0 +1,7 @@
+[harness]
+# Total attempts per step, including the initial execution.
+max_retries = 3
+timeout_seconds = 1800
+verification_timeout_seconds = 900
+max_output_bytes = 200000
+codex_command = "codex"
