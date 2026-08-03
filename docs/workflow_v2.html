@@ -1,0 +1,913 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Personal Codex Harness의 현재 구현 구조, 상태 흐름, 파일 및 함수 역할 분석">
+  <title>Personal Codex Harness · 구현 워크플로 분석</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09100f;
+      --panel: #101a18;
+      --panel-2: #14211e;
+      --line: #263a35;
+      --text: #e8f0ec;
+      --muted: #9fb2aa;
+      --green: #62e6a8;
+      --mint: #a7f3d0;
+      --amber: #f6c76e;
+      --red: #fb8c8c;
+      --blue: #7dd3fc;
+      --purple: #c4b5fd;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 78% 3%, rgba(98, 230, 168, .10), transparent 29rem),
+        radial-gradient(circle at 8% 32%, rgba(125, 211, 252, .07), transparent 25rem),
+        var(--bg);
+      color: var(--text);
+      font-family: Inter, Pretendard, "Noto Sans KR", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.68;
+    }
+    a { color: inherit; }
+    code, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+    }
+    code {
+      color: var(--mint);
+      background: rgba(98, 230, 168, .08);
+      border: 1px solid rgba(98, 230, 168, .14);
+      border-radius: 6px;
+      padding: .08rem .34rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      border-right: 1px solid var(--line);
+      background: rgba(9, 16, 15, .90);
+      backdrop-filter: blur(16px);
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .brand {
+      display: flex;
+      gap: 11px;
+      align-items: center;
+      margin-bottom: 26px;
+    }
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(98, 230, 168, .35);
+      border-radius: 11px;
+      background: rgba(98, 230, 168, .09);
+      color: var(--green);
+      font-weight: 800;
+      box-shadow: inset 0 0 20px rgba(98, 230, 168, .06);
+    }
+    .brand strong { display: block; letter-spacing: -.02em; }
+    .brand small { display: block; color: var(--muted); font-size: .72rem; }
+    nav a {
+      display: block;
+      margin: 3px 0;
+      padding: 8px 10px;
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: .89rem;
+      transition: 150ms ease;
+    }
+    nav a:hover, nav a.active {
+      color: var(--text);
+      background: rgba(98, 230, 168, .09);
+    }
+    nav .nav-label {
+      margin: 20px 10px 7px;
+      color: #71857c;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      font-size: .66rem;
+      font-weight: 800;
+    }
+    .scope-note {
+      margin-top: 24px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      color: var(--muted);
+      font-size: .75rem;
+    }
+
+    main { min-width: 0; }
+    .content { width: min(1180px, calc(100% - 72px)); margin: 0 auto; padding-bottom: 100px; }
+    .hero {
+      min-height: 78vh;
+      display: grid;
+      align-content: center;
+      padding: 80px 0 54px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      color: var(--green);
+      font: 700 .78rem/1.2 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 920px;
+      margin: 18px 0;
+      font-size: clamp(3rem, 7vw, 6.8rem);
+      line-height: .94;
+      letter-spacing: -.075em;
+      font-weight: 780;
+    }
+    h1 span { color: var(--green); }
+    .lead {
+      max-width: 790px;
+      margin: 8px 0 30px;
+      color: #c0cec8;
+      font-size: clamp(1.03rem, 1.6vw, 1.26rem);
+    }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 9px; }
+    .pill {
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255,255,255,.025);
+      color: var(--muted);
+      font-size: .78rem;
+    }
+    .pill strong { color: var(--text); }
+
+    section { padding: 76px 0 12px; scroll-margin-top: 24px; }
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 430px);
+      gap: 30px;
+      align-items: end;
+      margin-bottom: 30px;
+    }
+    .section-kicker { color: var(--green); font: 700 .72rem/1 monospace; letter-spacing: .12em; }
+    h2 { margin: 9px 0 0; font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1; letter-spacing: -.055em; }
+    h3 { margin: 0 0 10px; font-size: 1.15rem; letter-spacing: -.02em; }
+    h4 { margin: 24px 0 8px; color: var(--mint); font-size: .92rem; }
+    p { margin: 0 0 13px; }
+    .section-intro { margin: 0; color: var(--muted); }
+
+    .grid { display: grid; gap: 14px; }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      min-width: 0;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(20, 33, 30, .88), rgba(13, 23, 21, .9));
+      box-shadow: var(--shadow);
+    }
+    .card p:last-child { margin-bottom: 0; }
+    .card .number { color: var(--green); font: 700 1.8rem/1 monospace; }
+    .card .label { color: var(--muted); font-size: .8rem; }
+    .card.accent { border-color: rgba(98, 230, 168, .34); }
+    .callout {
+      padding: 17px 19px;
+      border-left: 3px solid var(--green);
+      border-radius: 3px 13px 13px 3px;
+      background: rgba(98, 230, 168, .065);
+      color: #c8d7d1;
+    }
+    .callout.warn { border-color: var(--amber); background: rgba(246, 199, 110, .07); }
+    .callout.danger { border-color: var(--red); background: rgba(251, 140, 140, .07); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(100px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+    .flow-step {
+      position: relative;
+      padding: 16px 13px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      min-height: 114px;
+    }
+    .flow-step:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -14px;
+      top: 43%;
+      z-index: 2;
+      width: 18px;
+      color: var(--green);
+      text-align: center;
+    }
+    .flow-step b { display: block; margin-bottom: 6px; font-size: .88rem; }
+    .flow-step small { color: var(--muted); line-height: 1.45; display: block; }
+    .flow-step .state { color: var(--green); font: 700 .69rem/1 monospace; text-transform: uppercase; }
+
+    .state-track {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel);
+    }
+    .state-node { padding: 7px 11px; border: 1px solid #345149; border-radius: 999px; font: 700 .76rem/1 monospace; }
+    .state-node.good { border-color: rgba(98,230,168,.6); color: var(--green); }
+    .state-node.bad { border-color: rgba(251,140,140,.55); color: var(--red); }
+    .state-node.wait { border-color: rgba(246,199,110,.55); color: var(--amber); }
+    .arrow { color: #62766d; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 1.25fr 1fr;
+      gap: 13px;
+      align-items: stretch;
+    }
+    .arch-column { display: grid; gap: 10px; }
+    .arch-box { padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+    .arch-box.center { border-color: rgba(98,230,168,.4); background: rgba(98,230,168,.065); }
+    .arch-box .path { color: var(--green); font: 700 .74rem/1.4 monospace; }
+    .arch-box p { color: var(--muted); font-size: .84rem; margin-top: 6px; }
+
+    .artifact-tree {
+      margin: 0;
+      padding: 21px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #0a1211;
+      color: #c9d8d2;
+      font: .84rem/1.75 "SFMono-Regular", Consolas, monospace;
+      white-space: pre;
+    }
+    .artifact-tree .green { color: var(--green); }
+    .artifact-tree .muted { color: #6f837a; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(16, 26, 24, .78);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th, td { padding: 12px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); background: rgba(255,255,255,.018); font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    td:first-child { color: var(--mint); white-space: nowrap; }
+    td p { margin: 0; }
+    .tag { display: inline-block; margin: 2px 3px 2px 0; padding: 2px 7px; border-radius: 999px; background: rgba(125,211,252,.09); color: var(--blue); font-size: .68rem; }
+    .tag.private { background: rgba(196,181,253,.08); color: var(--purple); }
+    .tag.guard { background: rgba(246,199,110,.08); color: var(--amber); }
+
+    details.file {
+      margin: 11px 0;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: rgba(16, 26, 24, .72);
+      overflow: hidden;
+    }
+    details.file[open] { border-color: #355049; }
+    summary {
+      cursor: pointer;
+      display: flex;
+      gap: 15px;
+      justify-content: space-between;
+      align-items: center;
+      padding: 17px 19px;
+      list-style: none;
+      user-select: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; color: var(--green); font-size: 1.3rem; }
+    details[open] summary::after { content: "−"; }
+    summary .file-name { color: var(--mint); font: 700 .9rem/1.3 monospace; }
+    summary .file-role { color: var(--muted); font-size: .78rem; text-align: right; }
+    .file-body { padding: 0 19px 20px; }
+    .file-body > p { color: #bdcbc5; }
+
+    .search-bar {
+      position: sticky;
+      top: 12px;
+      z-index: 10;
+      display: flex;
+      gap: 10px;
+      margin: 18px 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(9,16,15,.88);
+      backdrop-filter: blur(14px);
+    }
+    .search-bar input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+    }
+    .search-bar span { color: var(--muted); font-size: .8rem; align-self: center; }
+
+    .limit-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 11px; }
+    .limit-item { padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); }
+    .limit-item b { color: var(--amber); display: block; margin-bottom: 5px; }
+    .limit-item p { color: var(--muted); font-size: .84rem; }
+    .footer { margin-top: 85px; padding-top: 26px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+
+    @media (max-width: 1000px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 16px 24px; }
+      aside nav, .scope-note { display: none; }
+      .brand { margin: 0; }
+      .content { width: min(100% - 34px, 900px); }
+      .hero { min-height: auto; padding: 80px 0 54px; }
+      .section-head { grid-template-columns: 1fr; gap: 15px; }
+      .flow { grid-template-columns: repeat(2, 1fr); }
+      .flow-step:not(:last-child)::after { display: none; }
+      .architecture { grid-template-columns: 1fr; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 650px) {
+      h1 { font-size: 2.45rem; line-height: .99; }
+      .grid-2, .grid-3, .grid-4, .limit-list { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      section { padding-top: 58px; }
+      .card { padding: 18px; }
+      summary { align-items: flex-start; }
+      summary .file-role { display: none; }
+    }
+    @media print {
+      :root { color-scheme: light; --bg: white; --panel: #f7faf8; --panel-2: #edf5f0; --line: #ccd8d1; --text: #17201c; --muted: #4c5e55; }
+      body { background: white; }
+      aside, .search-bar { display: none; }
+      .layout { display: block; }
+      .content { width: 100%; }
+      .hero { min-height: auto; }
+      .card, .table-wrap, details.file { box-shadow: none; break-inside: avoid; }
+      details.file > .file-body { display: block !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">
+        <div class="brand-mark">H</div>
+        <div><strong>Harness Map</strong><small>implementation snapshot · 2026-08-02</small></div>
+      </div>
+      <nav aria-label="문서 목차">
+        <div class="nav-label">Overview</div>
+        <a href="#summary">현재 구현 요약</a>
+        <a href="#architecture">구성 요소 지도</a>
+        <a href="#workflow">전체 워크플로</a>
+        <a href="#states">상태 모델</a>
+        <a href="#artifacts">실행 산출물</a>
+        <div class="nav-label">Inventory</div>
+        <a href="#harness-files">harness/</a>
+        <a href="#schemas">schemas/</a>
+        <a href="#scripts">scripts/</a>
+        <a href="#tests">tests/</a>
+        <div class="nav-label">Assessment</div>
+        <a href="#safety">안전 경계</a>
+        <a href="#limits">현재 한계</a>
+        <a href="#conclusion">개발 상태 판단</a>
+      </nav>
+      <div class="scope-note">
+        분석 범위: <span class="mono">harness/</span>, <span class="mono">schemas/</span>, <span class="mono">scripts/</span>, <span class="mono">tests/</span><br>
+        제외: <span class="mono">.agents/skills</span>, <span class="mono">.harness</span>, 기존 <span class="mono">docs</span>
+      </div>
+    </aside>
+
+    <main>
+      <div class="content">
+        <header class="hero">
+          <div class="eyebrow">Personal Codex Harness / Current implementation</div>
+          <h1>계획은 에이전트가,<br><span>판정은 증거가.</span></h1>
+          <p class="lead">현재 프로젝트는 한 개의 계획을 승인한 뒤, 단일 실행 레인에서 각 단계를 순차 실행·재시도하고 독립 명령으로 검증하는 Python 3.11+ 하네스다. 상태 변경 권한은 컨트롤러에 집중되어 있고, Git 스냅샷과 실행 메타데이터 스냅샷이 에이전트의 작업 경계를 감시한다.</p>
+          <div class="hero-meta">
+            <span class="pill"><strong>4</strong> CLI 명령 + doctor</span>
+            <span class="pill"><strong>9</strong> harness 모듈</span>
+            <span class="pill"><strong>3</strong> JSON 계약</span>
+            <span class="pill"><strong>61</strong> 단위 테스트</span>
+            <span class="pill"><strong>0</strong> 외부 Python 의존성</span>
+          </div>
+        </header>
+
+        <section id="summary">
+          <div class="section-head">
+            <div><div class="section-kicker">01 / SUMMARY</div><h2>현재 구현 요약</h2></div>
+            <p class="section-intro">“개인용 Codex 작업 오케스트레이터”의 1단계 골격이 완성된 상태다. 계획 생성과 실제 수정 권한을 분리하고, 승인 시점의 저장소 상태를 실행 직전까지 고정한다.</p>
+          </div>
+          <div class="grid grid-4">
+            <article class="card"><div class="number">01</div><h3>계획</h3><p>Codex를 <code>read-only</code>로 실행해 스키마 기반 draft plan을 만든다.</p></article>
+            <article class="card"><div class="number">02</div><h3>승인</h3><p>사용자가 편집한 최종 계획의 SHA-256과 현재 Git fingerprint를 고정한다.</p></article>
+            <article class="card"><div class="number">03</div><h3>실행</h3><p>각 step을 <code>workspace-write</code>로 순차 실행하고 범위 위반을 사후 탐지한다.</p></article>
+            <article class="card accent"><div class="number">04</div><h3>독립 판정</h3><p>에이전트의 완료 주장을 신뢰하지 않고 acceptance command의 실제 종료 코드로 판정한다.</p></article>
+          </div>
+          <div class="callout" style="margin-top:16px"><strong>핵심 설계 문장:</strong> 모델 출력은 구조화된 보고서일 뿐이다. 완료의 근거는 컨트롤러가 직접 실행해 저장한 검증 명령 evidence다.</div>
+        </section>
+
+        <section id="architecture">
+          <div class="section-head">
+            <div><div class="section-kicker">02 / ARCHITECTURE</div><h2>구성 요소 지도</h2></div>
+            <p class="section-intro"><code>cli.py</code>가 객체를 조립하고, <code>controller.py</code>가 정책을 집행한다. Runner와 Verifier는 모두 subprocess를 다루지만 신뢰 수준과 역할이 다르다.</p>
+          </div>
+          <div class="architecture" aria-label="시스템 구성 요소 관계">
+            <div class="arch-column">
+              <div class="arch-box"><div class="path">scripts/harness.py</div><p>저장소 루트를 Python 경로에 넣는 실행 진입점</p></div>
+              <div class="arch-box"><div class="path">harness/cli.py</div><p>명령 파싱, 의존성 조립, JSON 출력과 종료 코드 결정</p></div>
+              <div class="arch-box"><div class="path">harness/config.py</div><p>TOML 설정 로딩 및 범위 검증</p></div>
+            </div>
+            <div class="arch-column">
+              <div class="arch-box center"><div class="path">harness/controller.py</div><p>plan → approve → run → verify 상태 전이의 유일한 소유자. Git 경계, 메타데이터 무결성, retry, terminal state를 결정한다.</p></div>
+              <div class="arch-box"><div class="path">harness/models.py + schemas/</div><p>계획·단계 결과·상태의 직렬화 계약과 추가 안전 검증</p></div>
+              <div class="arch-box"><div class="path">harness/store.py</div><p>run artifact의 원자적 저장, 이벤트 append, 스냅샷 복원</p></div>
+            </div>
+            <div class="arch-column">
+              <div class="arch-box"><div class="path">harness/runner.py</div><p>Codex CLI 실행, JSONL 이벤트 및 구조화 최종 출력 수집</p></div>
+              <div class="arch-box"><div class="path">harness/verifier.py</div><p>승인된 argv 명령을 shell 없이 실행하고 독립 evidence 생성</p></div>
+              <div class="arch-box"><div class="path">harness/git_guard.py</div><p>브랜치·HEAD·index·dirty path의 읽기 전용 스냅샷과 변화 계산</p></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="workflow">
+          <div class="section-head">
+            <div><div class="section-kicker">03 / WORKFLOW</div><h2>끝에서 끝까지</h2></div>
+            <p class="section-intro">정상 실행은 7개의 큰 구간을 통과한다. 각 step의 에이전트 실행과 검증 사이에 Git 및 하네스 메타데이터 검사가 끼어 있다.</p>
+          </div>
+          <div class="flow">
+            <div class="flow-step"><span class="state">draft</span><b>1. Plan</b><small>read-only Codex가 plan schema에 맞는 계획 생성</small></div>
+            <div class="flow-step"><span class="state">approved</span><b>2. Approve</b><small>plan hash + Git fingerprint 기록</small></div>
+            <div class="flow-step"><span class="state">running</span><b>3. Step run</b><small>Codex workspace-write 실행, JSONL 수집</small></div>
+            <div class="flow-step"><span class="state">guard</span><b>4. Boundary</b><small>metadata, evidence, branch, HEAD, index, path 검사</small></div>
+            <div class="flow-step"><span class="state">verifying</span><b>5. Verify</b><small>step acceptance command 순차 실행</small></div>
+            <div class="flow-step"><span class="state">retry</span><b>6. Retry</b><small>실패 evidence를 다음 prompt에 전달</small></div>
+            <div class="flow-step"><span class="state">completed</span><b>7. Final</b><small>전체 acceptance 후 terminal state 확정</small></div>
+          </div>
+
+          <div class="grid grid-2" style="margin-top:16px">
+            <article class="card">
+              <h3><code>plan(goal)</code></h3>
+              <p>공백 goal을 거부하고 run directory를 먼저 만든다. Codex에는 계획 작성 전용 prompt, <code>read-only</code> sandbox, <code>plan.schema.json</code>을 넘긴다. 프로세스 성공 조건과 <code>Plan.from_dict</code> 검증을 모두 통과해야 <code>plan.json</code>, step markdown, 초기 <code>state.json</code>이 저장된다.</p>
+            </article>
+            <article class="card">
+              <h3><code>approve(run_id)</code></h3>
+              <p>plan과 state가 모두 draft인지 확인한다. draft 동안 사용자가 <code>plan.json</code>을 편집할 수 있으므로 승인 시 step 문서와 state를 다시 만든다. approved plan hash와 Git snapshot fingerprint를 저장해 이후 변조를 감지한다.</p>
+            </article>
+            <article class="card">
+              <h3><code>run(run_id)</code></h3>
+              <p>승인된 plan hash와 현재 plan이 일치하고, Git fingerprint도 승인 당시와 동일해야 시작한다. step마다 최대 <code>max_retries</code>회 Codex를 호출하고, 에이전트가 <code>completed</code>를 보고한 경우에만 acceptance command를 실행한다.</p>
+            </article>
+            <article class="card">
+              <h3><code>_verify_with_guard(...)</code></h3>
+              <p>검증 전후 Git 및 모든 runs 파일을 비교한다. 테스트·lint 자체가 저장소 파일, Git branch/HEAD/index 또는 controller metadata를 바꾸면 명령의 exit code가 0이어도 safety failure로 처리한다.</p>
+            </article>
+          </div>
+
+          <h4>step 한 번의 실제 판정 순서</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>행동</th><th>통과 기준 / 실패 결과</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td>state를 <code>running</code>, attempt를 현재 번호로 저장</td><td>컨트롤러가 원자적으로 기록</td></tr>
+                <tr><td>2</td><td>Git snapshot과 전체 runs artifact snapshot 확보</td><td>비교 기준선 생성</td></tr>
+                <tr><td>3</td><td>Codex 실행</td><td>exit 0 + timeout 아님 + 마지막 terminal event가 <code>turn.completed</code> + 유효 final object + malformed/truncation/reader error 없음</td></tr>
+                <tr><td>4</td><td>runs 파일 변조 복원 및 분류</td><td>현재 attempt event log만 새 evidence로 허용. metadata 또는 과거 evidence 변조면 즉시 failed</td></tr>
+                <tr><td>5</td><td>Git 경계 검사</td><td>branch/HEAD/index 불변, 실제 changed path가 모두 step <code>allowed_paths</code>에 포함</td></tr>
+                <tr><td>6</td><td><code>StepResult</code> 해석</td><td><code>blocked</code>는 즉시 중단, <code>failed</code>는 retry, <code>completed</code>만 검증 진입</td></tr>
+                <tr><td>7</td><td>acceptance commands</td><td>모든 명령 exit 0 + 검증 과정이 어떤 파일·Git·run metadata도 변경하지 않음</td></tr>
+                <tr><td>8</td><td>성공 또는 retry</td><td>성공 summary는 다음 step prompt에 전달. 실패 evidence는 같은 step의 다음 attempt prompt에 전달</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="states">
+          <div class="section-head">
+            <div><div class="section-kicker">04 / STATE MODEL</div><h2>상태 전이</h2></div>
+            <p class="section-intro">Plan status, run status, step status는 분리되어 있다. <code>terminal_result</code>는 run의 최종 결과만 <code>completed / failed / blocked</code> 중 하나로 기록한다.</p>
+          </div>
+          <h3>Run</h3>
+          <div class="state-track">
+            <span class="state-node">draft</span><span class="arrow">→ approve →</span>
+            <span class="state-node">approved</span><span class="arrow">→ run →</span>
+            <span class="state-node">running</span><span class="arrow">→ steps done →</span>
+            <span class="state-node wait">verifying</span><span class="arrow">→</span>
+            <span class="state-node good">completed</span>
+            <span class="arrow">또는</span><span class="state-node bad">failed</span>
+            <span class="arrow">/</span><span class="state-node wait">blocked</span>
+          </div>
+          <h3 style="margin-top:22px">Step</h3>
+          <div class="state-track">
+            <span class="state-node">pending</span><span class="arrow">→</span>
+            <span class="state-node">running</span><span class="arrow">→ agent completed →</span>
+            <span class="state-node wait">verifying</span><span class="arrow">→</span>
+            <span class="state-node good">completed</span>
+            <span class="arrow">검증/실행 실패 시</span><span class="state-node wait">retrying</span><span class="arrow">↺ running</span>
+            <span class="arrow">끝</span><span class="state-node bad">failed</span><span class="arrow">/</span><span class="state-node wait">blocked</span>
+          </div>
+          <div class="callout warn" style="margin-top:17px"><strong>재실행 모델:</strong> <code>run()</code>은 오직 <code>approved</code> 상태에서만 시작한다. 중간에 failed/blocked/running으로 끝난 run을 이어서 재개하는 경로는 현재 없다.</div>
+        </section>
+
+        <section id="artifacts">
+          <div class="section-head">
+            <div><div class="section-kicker">05 / ARTIFACTS</div><h2>run별 산출물</h2></div>
+            <p class="section-intro"><code>RunStore</code>가 관리하는 논리 구조다. 실제 root 설정 내용은 분석하지 않았으며, 코드상 <code>runs_root/run_id</code> 아래에 다음 파일이 생성된다.</p>
+          </div>
+          <pre class="artifact-tree"><span class="green">runs_root/</span>
+└── <span class="green">&lt;run-id&gt;/</span>
+    ├── request.md                       <span class="muted"># 원본 goal</span>
+    ├── plan.json                        <span class="muted"># draft → approved plan</span>
+    ├── state.json                       <span class="muted"># controller-owned 현재 상태</span>
+    ├── approved-git.json                <span class="muted"># 승인 시 Git snapshot</span>
+    ├── events.jsonl                     <span class="muted"># 상태 전이 감사 로그</span>
+    ├── <span class="green">steps/</span>
+    │   └── 00-&lt;step-name&gt;.md            <span class="muted"># 사람이 읽는 step 명세</span>
+    └── <span class="green">evidence/</span>
+        ├── plan-events.jsonl            <span class="muted"># 계획 Codex event stream</span>
+        ├── step-00-attempt-01.jsonl     <span class="muted"># 실행 Codex event stream</span>
+        ├── step-00-attempt-01-agent.json<span class="muted"># runner 결과 + 실제 changed paths</span>
+        ├── step-00-attempt-01-verification.json
+        └── final-verification.json</pre>
+          <div class="grid grid-3" style="margin-top:14px">
+            <div class="card"><h3>원자적 저장</h3><p>임시 파일을 같은 디렉터리에 쓰고 <code>fsync</code> 후 <code>os.replace</code>하여 중간 상태 노출을 줄인다.</p></div>
+            <div class="card"><h3>append-only 이벤트</h3><p>각 이벤트에 UTC timestamp를 자동 추가하고 한 줄 JSON으로 append + fsync한다.</p></div>
+            <div class="card"><h3>변조 복원</h3><p>에이전트 실행 전 모든 run 파일을 캡처하고, 예상하지 않은 변경을 복원한 뒤 run을 실패시킨다.</p></div>
+          </div>
+        </section>
+
+        <section id="harness-files">
+          <div class="section-head">
+            <div><div class="section-kicker">06 / HARNESS</div><h2>harness/ 파일과 함수</h2></div>
+            <p class="section-intro">아래 항목은 소스의 클래스·함수·중요 메서드를 파일별로 정리한 것이다. 검색창으로 이름이나 역할을 필터링할 수 있다.</p>
+          </div>
+          <div class="search-bar"><input id="symbol-search" type="search" placeholder="예: snapshot, verify, atomic, Plan.from_dict" aria-label="함수 검색"><span id="search-count">전체 표시</span></div>
+          <div id="symbol-files">
+            <details class="file" open data-search="__init__ exports version">
+              <summary><span class="file-name">harness/__init__.py</span><span class="file-role">패키지 공개 표면</span></summary>
+              <div class="file-body"><p><code>Plan</code>, <code>PlanStep</code>, <code>RunState</code>, <code>ValidationError</code>만 재노출하고 패키지 버전을 <code>0.1.0</code>으로 선언한다. 실행 로직은 없다.</p></div>
+            </details>
+
+            <details class="file" open data-search="cli build_controller build_parser main run_doctor _check _print_json argparse exit code">
+              <summary><span class="file-name">harness/cli.py</span><span class="file-role">CLI 라우팅 · 객체 조립 · 진단</span></summary>
+              <div class="file-body">
+                <p>사용자 명령을 컨트롤러 호출로 바꾸는 얇은 계층이다. 성공 결과는 stdout JSON, 사용자/환경 오류는 stderr와 exit 2로 전달한다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr data-search="build_controller"><td><code>build_controller(root)</code></td><td>설정, store, CodexRunner, Verifier, GitGuard를 만들고 <code>HarnessController</code>에 주입한다.</td></tr>
+                  <tr data-search="build_parser"><td><code>build_parser()</code></td><td><code>plan / approve / run / status / doctor</code> argparse 명령과 인자를 정의한다.</td></tr>
+                  <tr data-search="main"><td><code>main(...)</code></td><td>명령을 라우팅하고 JSON을 출력한다. run 종료 코드는 completed=0, failed=1, blocked=2다. Harness/validation/Git/OS 오류는 2다.</td></tr>
+                  <tr data-search="run_doctor"><td><code>run_doctor(root)</code></td><td>Python 3.11+, Git repo, config, Codex 실행 파일, 3개 schema JSON, state root 쓰기 권한을 진단한다.</td></tr>
+                  <tr data-search="_check"><td><code>_check(...)</code> <span class="tag private">private</span></td><td>doctor 항목을 <code>{name, ok, detail}</code> 형태로 만든다.</td></tr>
+                  <tr data-search="_print_json"><td><code>_print_json(value)</code> <span class="tag private">private</span></td><td>한글을 보존한 2칸 들여쓰기 JSON을 stdout에 출력한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" data-search="config HarnessConfig load validate _bounded_int toml timeout retries output codex_command">
+              <summary><span class="file-name">harness/config.py</span><span class="file-role">TOML 설정 계약</span></summary>
+              <div class="file-body">
+                <p><code>HarnessConfig</code>는 불변 dataclass다. 기본값은 retry 3회, Codex 1800초, 검증 900초, 출력 200,000 bytes, 명령 <code>codex</code>다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>HarnessConfig.load(path)</code></td><td>TOML을 읽고 최상위가 오직 <code>[harness]</code>인지, 필드가 허용 목록 안인지 확인한 뒤 객체를 만든다.</td></tr>
+                  <tr><td><code>HarnessConfig.validate()</code></td><td>retry 1–10, 두 timeout 1–7200초, output 1,024–10,000,000 bytes, 비어 있지 않은 Codex command를 강제한다.</td></tr>
+                  <tr><td><code>_bounded_int(...)</code> <span class="tag private">private</span></td><td>bool을 정수로 허용하지 않으면서 정수 범위를 검사한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" open data-search="controller HarnessController plan approve run status _read_plan _write_state _verify_with_guard _fail_run _agent_failure _planning_prompt _step_document _execution_prompt _default_run_id _changed_keys state retry">
+              <summary><span class="file-name">harness/controller.py</span><span class="file-role">오케스트레이션과 상태 변경의 유일한 소유자</span></summary>
+              <div class="file-body">
+                <p><code>HarnessController</code>가 phase-one 전체 정책을 구현한다. 외부 구성 요소는 결과나 snapshot을 제공하지만 run/step 상태를 직접 바꾸지 않는다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>HarnessError</code></td><td>사용 흐름 및 컨트롤러 정책 위반을 표현하는 런타임 오류다.</td></tr>
+                  <tr><td><code>ControllerPaths</code></td><td>plan 및 step-result schema 경로를 묶는 불변 값 객체다.</td></tr>
+                  <tr><td><code>HarnessController.__init__</code></td><td>root, store, runner, verifier, Git guard, config와 선택적 run-id factory를 주입받는다.</td></tr>
+                  <tr><td><code>plan(goal)</code></td><td>read-only 계획 생성, 이중 검증(schema output + model), plan/step/state 저장, <code>plan.created</code> 기록.</td></tr>
+                  <tr><td><code>approve(run_id)</code></td><td>draft를 approved로 바꾸고 step/state를 재구축하며 plan hash와 Git baseline을 고정한다.</td></tr>
+                  <tr><td><code>run(run_id)</code></td><td>승인 무결성 확인, step 순차 실행, scope guard, retry, step/final verification, terminal state 확정을 담당하는 중심 메서드다.</td></tr>
+                  <tr><td><code>status(run_id)</code></td><td><code>state.json</code>을 읽어 <code>RunState</code>로 검증·반환한다.</td></tr>
+                  <tr><td><code>_read_plan(...)</code> <span class="tag private">private</span></td><td><code>plan.json</code>을 <code>Plan</code> 계약으로 읽는다.</td></tr>
+                  <tr><td><code>_write_state(...)</code> <span class="tag private">private</span></td><td>현재 state를 controller-owned <code>state.json</code>으로 원자 저장한다.</td></tr>
+                  <tr><td><code>_verify_with_guard(...)</code> <span class="tag guard">guard</span></td><td>Verifier 실행 전후 runs 파일과 Git을 비교해 검증의 부작용을 safety error로 바꾼다.</td></tr>
+                  <tr><td><code>_fail_run(...)</code> <span class="tag private">private</span></td><td>step/run을 failed로 바꾸고 <code>step.failed</code>, <code>run.failed</code> 이벤트를 남긴다.</td></tr>
+                  <tr><td><code>_agent_failure(...)</code> <span class="tag private">private</span></td><td>timeout → reader error → truncation → malformed JSONL → stderr → 일반 실패 순으로 사람이 읽는 원인을 만든다.</td></tr>
+                  <tr><td><code>_planning_prompt(...)</code> <span class="tag private">prompt</span></td><td>수정 금지, 순차 step ID, 좁은 allowed path, shell operator 없는 argv 검증을 계획 에이전트에 지시한다.</td></tr>
+                  <tr><td><code>_step_document(...)</code> <span class="tag private">render</span></td><td>각 PlanStep을 objective/read/allowed/acceptance 섹션의 Markdown으로 렌더링한다.</td></tr>
+                  <tr><td><code>_execution_prompt(...)</code> <span class="tag private">prompt</span></td><td>현재 step 범위, 앞선 summary, 직전 실패 evidence, metadata 수정 금지, 최소 변경 원칙을 전달한다.</td></tr>
+                  <tr><td><code>_default_run_id(goal)</code></td><td>goal slug + UTC 마이크로초 timestamp + random hex로 64자 규칙 안의 충돌 저항 run ID를 만든다.</td></tr>
+                  <tr><td><code>_changed_keys(before, after)</code></td><td>byte snapshot 두 개에서 추가·삭제·내용 변경된 key 집합을 계산한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" data-search="git GitGuard GitSnapshot GitError snapshot changed_paths _hash_path _git _parse_porcelain_paths paths_outside_allowed fingerprint index branch head dirty">
+              <summary><span class="file-name">harness/git_guard.py</span><span class="file-role">읽기 전용 Git 경계</span></summary>
+              <div class="file-body">
+                <p>작업 트리를 정리하거나 되돌리지 않고, 승인 전후 및 실행 전후의 변화를 측정한다. pre-existing dirty file도 content hash로 추적한다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>GitError</code></td><td>읽기 전용 Git 명령 실패를 감싼다.</td></tr>
+                  <tr><td><code>GitSnapshot</code></td><td>branch, HEAD, porcelain, dirty paths/hashes, 전체 fingerprint, index fingerprint를 보관하고 JSON으로 직렬화한다.</td></tr>
+                  <tr><td><code>GitGuard.snapshot()</code></td><td><code>rev-parse</code>, <code>status --porcelain -z</code>, <code>ls-files --stage -z</code>와 파일 SHA-256을 결합해 저장소 상태를 만든다.</td></tr>
+                  <tr><td><code>GitGuard.changed_paths(...)</code></td><td>dirty path의 추가와 content hash 변화, index fingerprint 변화를 경로 집합으로 계산한다.</td></tr>
+                  <tr><td><code>GitGuard._hash_path(...)</code> <span class="tag private">private</span></td><td>일반 파일은 streaming SHA-256, symlink는 target hash, 사라진 파일은 <code>missing</code>으로 표현한다.</td></tr>
+                  <tr><td><code>GitGuard._git(...)</code> <span class="tag private">private</span></td><td><code>shell=False</code>로 Git을 실행하고 non-zero를 <code>GitError</code>로 바꾼다.</td></tr>
+                  <tr><td><code>_parse_porcelain_paths(...)</code></td><td>NUL-delimited porcelain v1을 읽으며 rename/copy의 두 번째 경로까지 수집한다.</td></tr>
+                  <tr><td><code>paths_outside_allowed(...)</code></td><td><code>fnmatchcase</code>로 changed path 중 어떤 allowed glob에도 맞지 않는 항목을 반환한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" data-search="models ValidationError validate_id validate_relative_path _require_string _require_exact_keys _string_tuple _path_tuple _allowed_path_tuple _commands _validate_verification_command _git_subcommand PlanStep Plan StepResult RunState from_dict to_dict with_status sha256 from_plan step _optional_string _optional_id _terminal_result">
+              <summary><span class="file-name">harness/models.py</span><span class="file-role">도메인 계약 · 런타임 안전 검증</span></summary>
+              <div class="file-body">
+                <p>JSON Schema와 겹치는 구조 검증뿐 아니라 Python 코드에서만 수행되는 의미·안전 검증을 담당한다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>ValidationError</code></td><td>계획, 결과, 상태, 설정, 저장 경로 계약 위반의 공통 예외다.</td></tr>
+                  <tr><td><code>validate_id(value, label)</code></td><td>소문자 영숫자로 시작하고 소문자·숫자·하이픈만 쓰는 최대 64자 ID를 강제한다.</td></tr>
+                  <tr><td><code>validate_relative_path(...)</code></td><td>비어 있지 않은 POSIX 상대 경로만 허용하고 absolute, backslash, <code>.</code>, <code>..</code>을 거부한다.</td></tr>
+                  <tr><td><code>_require_string(...)</code></td><td>trim 후 비어 있지 않은 문자열을 반환한다.</td></tr>
+                  <tr><td><code>_require_exact_keys(...)</code></td><td>필수 필드 누락과 알 수 없는 필드를 모두 거부한다.</td></tr>
+                  <tr><td><code>_string_tuple(...)</code> / <code>_path_tuple(...)</code></td><td>JSON array를 검증된 불변 tuple로 변환한다.</td></tr>
+                  <tr><td><code>_allowed_path_tuple(...)</code> <span class="tag guard">guard</span></td><td><code>.git</code>과 <code>.harness</code>를 allowed path로 선언하지 못하게 한다.</td></tr>
+                  <tr><td><code>_commands(...)</code></td><td>명령 목록을 shell string이 아닌 비어 있지 않은 argv tuple 목록으로 정규화한다.</td></tr>
+                  <tr><td><code>_validate_verification_command(...)</code> <span class="tag guard">guard</span></td><td>shell, 파괴 실행 파일, interpreter inline code, mutating/unknown Git subcommand를 차단한다.</td></tr>
+                  <tr><td><code>_git_subcommand(...)</code></td><td><code>-C</code>, <code>-c</code> 등 global option을 건너뛰고 실제 Git subcommand를 찾는다.</td></tr>
+                  <tr><td><code>PlanStep.from_dict()</code></td><td>정확한 7필드와 최소 1개의 acceptance command를 갖는 step을 만든다.</td></tr>
+                  <tr><td><code>PlanStep.to_dict()</code></td><td>tuple 기반 step을 JSON 저장 가능한 dict/list로 변환한다.</td></tr>
+                  <tr><td><code>Plan.from_dict()</code></td><td>version 1, draft/approved, 1–100 steps, 유일하고 정확히 순차적인 <code>step-00...</code> ID를 강제한다.</td></tr>
+                  <tr><td><code>Plan.to_dict()</code> / <code>with_status()</code></td><td>직렬화하고 나머지 필드를 보존한 새 status Plan을 만든다.</td></tr>
+                  <tr><td><code>Plan.sha256()</code></td><td>key 정렬·compact JSON의 SHA-256으로 승인 이후 plan 변조를 탐지한다.</td></tr>
+                  <tr><td><code>StepResult.from_dict()</code></td><td>에이전트 보고를 completed/failed/blocked 결과와 summary/path/error/blocker/action으로 검증한다.</td></tr>
+                  <tr><td><code>RunState.from_plan()</code></td><td>draft run과 pending step 목록을 초기화한다.</td></tr>
+                  <tr><td><code>RunState.from_dict()</code></td><td>run/step status, non-negative attempts, optional 필드, terminal result를 검증한다.</td></tr>
+                  <tr><td><code>RunState.to_dict()</code> / <code>step(id)</code></td><td>상태 직렬화 및 ID 기반 mutable step state 조회를 제공한다.</td></tr>
+                  <tr><td><code>_optional_string()</code> / <code>_optional_id()</code> / <code>_terminal_result()</code></td><td>nullable 상태 필드의 세부 계약을 검증한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" data-search="runner AgentRunRequest AgentRunResult AgentRunner CodexRunner process_succeeded _bounded parse_event_stream build_command run _read_final_payload _terminate _coerce_text _consume_bounded_stream _consume_event_stream jsonl timeout truncated reader">
+              <summary><span class="file-name">harness/runner.py</span><span class="file-role">Codex CLI 어댑터 · bounded event 수집</span></summary>
+              <div class="file-body">
+                <p>프로젝트 전체에서 Codex CLI 세부사항을 격리한 모듈이다. stdout JSONL과 <code>-o</code> 최종 JSON을 별도 경로로 수집한다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>AgentRunRequest</code></td><td>prompt, sandbox, output schema, cwd, event log, timeout, output byte limit의 불변 요청 객체.</td></tr>
+                  <tr><td><code>AgentRunResult</code></td><td>exit code, final payload, stderr, timeout, terminal event와 malformed/truncated/reader 상태를 보관한다.</td></tr>
+                  <tr><td><code>process_succeeded</code></td><td>성공의 엄격한 합성 조건을 계산한다. 단순 exit 0만으로는 성공하지 않는다.</td></tr>
+                  <tr><td><code>AgentRunner</code></td><td>테스트 fake와 실제 CodexRunner가 공유하는 <code>run(request)</code> Protocol.</td></tr>
+                  <tr><td><code>_bounded(...)</code></td><td>UTF-8 byte 기준으로 문자열을 제한하고 truncation marker를 붙인다.</td></tr>
+                  <tr><td><code>parse_event_stream(raw)</code></td><td>JSONL을 object event로 파싱하고 잘못된 line은 evidence event로 보존하며 마지막 terminal event를 찾는다.</td></tr>
+                  <tr><td><code>CodexRunner.build_command(...)</code></td><td><code>codex exec --json --sandbox ... --output-schema ... -o ... prompt</code> argv를 만든다. sandbox는 두 값만 허용한다.</td></tr>
+                  <tr><td><code>CodexRunner.run(...)</code></td><td>임시 출력 파일, subprocess process group, stdout/stderr reader thread, timeout kill, event log atomic replace, final payload 해석을 총괄한다.</td></tr>
+                  <tr><td><code>_read_final_payload(...)</code></td><td>byte limit보다 1 byte 더 읽어 초과를 감지하고 UTF-8 JSON object만 허용한다.</td></tr>
+                  <tr><td><code>_terminate(...)</code></td><td>POSIX에서는 process group, Windows에서는 process 자체를 kill한다.</td></tr>
+                  <tr><td><code>_coerce_text(...)</code></td><td>None/bytes/str 출력을 안전한 문자열로 통일한다.</td></tr>
+                  <tr><td><code>_consume_bounded_stream(...)</code></td><td>stderr를 끝까지 drain하되 메모리에는 설정 byte까지만 보관한다.</td></tr>
+                  <tr><td><code>_consume_event_stream(...)</code></td><td>stdout을 line 단위로 읽어 정규화한 JSONL만 제한 크기까지 기록하고 malformed/truncation/terminal 상태를 집계한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" data-search="store RunStore run_dir create_run artifact_path evidence_path read_json write_json_atomic write_evidence_atomic write_text_atomic write_step_text clear_step_documents capture_controller_files restore_controller_files capture_evidence_files capture_runs_files restore_runs_files _ensure_real_parents restore_evidence_files append_event _atomic_write _atomic_write_bytes snapshot symlink fsync">
+              <summary><span class="file-name">harness/store.py</span><span class="file-role">run artifact 저장과 복원</span></summary>
+              <div class="file-body">
+                <p>컨트롤러가 소유하는 파일의 물리적 저장 계층이다. 파일 이름·run ID 경계를 검증하고, 일반 저장은 원자 교체를 사용한다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>RunStore.__init__</code> / <code>run_dir()</code></td><td>runs root를 resolve하고 안전한 run ID의 디렉터리를 계산한다.</td></tr>
+                  <tr><td><code>create_run(...)</code></td><td>중복 없이 run/steps/evidence 디렉터리를 만들고 goal을 <code>request.md</code>로 저장한다.</td></tr>
+                  <tr><td><code>artifact_path()</code> / <code>evidence_path()</code></td><td>slash, backslash, dot segment가 없는 단일 파일명만 허용한다.</td></tr>
+                  <tr><td><code>read_json(...)</code></td><td>UTF-8 JSON object를 읽으며 OS/parse/type 오류를 ValidationError로 바꾼다.</td></tr>
+                  <tr><td><code>write_json_atomic()</code> / <code>write_evidence_atomic()</code> / <code>write_text_atomic()</code></td><td>일반 artifact 또는 evidence를 newline이 있는 UTF-8로 원자 저장한다.</td></tr>
+                  <tr><td><code>write_step_text(...)</code></td><td>0–99 index와 안전한 step name으로 <code>steps/NN-name.md</code>를 쓴다.</td></tr>
+                  <tr><td><code>clear_step_documents(...)</code></td><td>승인 시 이전에 렌더링한 regular step markdown만 삭제한다.</td></tr>
+                  <tr><td><code>capture_controller_files()</code> / <code>restore_controller_files()</code></td><td>한 run의 evidence 제외 파일 snapshot/복원을 제공한다. 현재 controller에서는 더 넓은 runs snapshot 경로를 사용한다.</td></tr>
+                  <tr><td><code>capture_evidence_files()</code> / <code>restore_evidence_files()</code></td><td>한 run의 evidence 전용 snapshot/복원 API다. symlink는 캡처 가능하지만 복원은 거부한다.</td></tr>
+                  <tr><td><code>capture_runs_files()</code></td><td>모든 run의 전체 file/symlink bytes를 재귀 캡처하며 symlink directory를 따라가지 않는다.</td></tr>
+                  <tr><td><code>restore_runs_files()</code> <span class="tag guard">guard</span></td><td>전체 snapshot을 먼저 안전성 검증한 뒤 복원하고 snapshot에 없던 현재 파일을 제거한다.</td></tr>
+                  <tr><td><code>_ensure_real_parents(...)</code></td><td>복원 경로의 parent가 symlink/파일이면 제거하고 실제 directory chain으로 만든다.</td></tr>
+                  <tr><td><code>append_event(...)</code></td><td>기본 UTC timestamp를 넣고 compact JSONL을 append한 뒤 fsync한다.</td></tr>
+                  <tr><td><code>_atomic_write()</code> / <code>_atomic_write_bytes()</code></td><td>같은 parent의 NamedTemporaryFile에 flush+fsync 후 <code>os.replace</code>; 오류 시 temp를 정리한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+
+            <details class="file" data-search="verifier CommandEvidence VerificationResult Verifier to_dict failure_summary verify _bounded _coerce_text _consume_bounded_stream _terminate_process_tree timeout stdout stderr exit">
+              <summary><span class="file-name">harness/verifier.py</span><span class="file-role">독립 acceptance command 실행기</span></summary>
+              <div class="file-body">
+                <p>검증 argv를 <code>shell=False</code>로 순차 실행하며 첫 실패에서 멈춘다. 명령 안전성은 계획을 읽는 <code>models.py</code>에서 먼저 검사된다.</p>
+                <div class="table-wrap"><table><thead><tr><th>심볼</th><th>역할</th></tr></thead><tbody>
+                  <tr><td><code>_bounded(...)</code> / <code>_coerce_text(...)</code></td><td>stdout/stderr의 byte 제한과 bytes → text 변환을 담당한다.</td></tr>
+                  <tr><td><code>CommandEvidence</code></td><td>argv, exit, stdout, stderr, duration, timeout을 저장하고 JSON dict로 변환한다.</td></tr>
+                  <tr><td><code>VerificationResult</code></td><td>전체 ok와 실제 실행된 command evidence tuple을 저장한다.</td></tr>
+                  <tr><td><code>failure_summary()</code></td><td>마지막 실패 명령의 argv와 stderr 우선 상세를 retry prompt/state용 문자열로 만든다.</td></tr>
+                  <tr><td><code>Verifier.verify(...)</code></td><td>명령을 순서대로 process group에서 실행한다. timeout=124, reader failure=125, 실행 불가=127로 evidence를 표준화한다.</td></tr>
+                  <tr><td><code>_consume_bounded_stream(...)</code></td><td>stdout/stderr pipe deadlock을 피하도록 thread에서 drain하고 제한량만 저장한다.</td></tr>
+                  <tr><td><code>_terminate_process_tree(...)</code></td><td>timeout 또는 reader hang 시 자식까지 포함한 process group을 종료한다.</td></tr>
+                </tbody></table></div>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <section id="schemas">
+          <div class="section-head">
+            <div><div class="section-kicker">07 / SCHEMAS</div><h2>schemas/ 데이터 계약</h2></div>
+            <p class="section-intro">세 파일 모두 JSON Schema draft 2020-12, version 1 계약이다. plan과 step-result는 Codex의 <code>--output-schema</code>에 직접 사용된다.</p>
+          </div>
+          <div class="grid grid-3">
+            <article class="card">
+              <h3><code>plan.schema.json</code></h3>
+              <p><code>goal</code>, <code>draft|approved</code>, 1–100개의 step, final commands를 정의한다. 각 step은 ID/name/objective/read/allowed/acceptance/forbidden의 정확한 7필드다.</p>
+              <p class="label">추가 Python 검증: 순차 ID, path escape, metadata 경로, 위험 명령 차단.</p>
+            </article>
+            <article class="card">
+              <h3><code>step-result.schema.json</code></h3>
+              <p>에이전트가 내는 <code>completed|failed|blocked</code>, summary, changed files, error, blocker, required action의 정확한 6필드다.</p>
+              <p class="label"><code>changed_files</code>는 보고용이며 실제 범위 판정은 GitGuard 측정값을 쓴다.</p>
+            </article>
+            <article class="card">
+              <h3><code>state.schema.json</code></h3>
+              <p>run 상태, 승인 hash/fingerprint, current step, step별 attempts/summary/error, terminal result를 문서화한다.</p>
+              <p class="label">Codex output에는 사용하지 않고 doctor가 JSON parse 여부를 확인한다. 실제 read 검증은 <code>RunState.from_dict</code>가 맡는다.</p>
+            </article>
+          </div>
+          <div class="callout warn" style="margin-top:16px"><strong>Schema와 모델의 차이:</strong> schema의 path는 단순 non-empty string이지만 Python 모델은 repository escape를 막는다. schema의 command는 단순 argv array지만 모델은 shell·파괴 명령·inline interpreter·쓰기 Git 명령을 막는다. 즉 런타임 모델이 더 강한 계약이다.</div>
+        </section>
+
+        <section id="scripts">
+          <div class="section-head">
+            <div><div class="section-kicker">08 / ENTRYPOINT</div><h2>scripts/ 진입점</h2></div>
+            <p class="section-intro">실제 명령 파일은 의도적으로 얇다.</p>
+          </div>
+          <details class="file" open>
+            <summary><span class="file-name">scripts/harness.py</span><span class="file-role">저장소 로컬 실행 래퍼</span></summary>
+            <div class="file-body">
+              <p><code>ROOT = scripts/..</code>를 계산해 <code>sys.path</code> 선두에 넣고 <code>harness.cli.main(root=ROOT)</code>을 호출한다. 반환값을 <code>SystemExit</code>로 전달하므로 shell에서 CLI 종료 코드를 그대로 받을 수 있다. 별도 함수는 없다.</p>
+            </div>
+          </details>
+        </section>
+
+        <section id="tests">
+          <div class="section-head">
+            <div><div class="section-kicker">09 / TESTS</div><h2>tests/ 검증 범위</h2></div>
+            <p class="section-intro">총 61개 <code>unittest</code>가 모델·저장소·CLI·컨트롤러·실제 subprocess·임시 Git 저장소를 다룬다. 외부 네트워크나 실제 Codex 호출 없이 실행된다.</p>
+          </div>
+
+          <details class="file" open>
+            <summary><span class="file-name">tests/test_models_store.py</span><span class="file-role">모델 13 + 저장소 5 = 18 tests</span></summary>
+            <div class="file-body">
+              <p><code>valid_plan()</code>은 다른 테스트도 공유하는 최소 유효 plan fixture다.</p>
+              <div class="table-wrap"><table><thead><tr><th>그룹</th><th>테스트 함수와 보장</th></tr></thead><tbody>
+                <tr><td><code>PlanModelTests</code></td><td><code>test_round_trip</code> 직렬화 왕복 · <code>test_rejects_path_escape</code> · <code>test_rejects_absolute_path</code> · <code>test_rejects_controller_or_git_metadata_as_allowed_path</code> · <code>test_rejects_shell_string_command</code> · <code>test_rejects_destructive_verification_commands</code> · <code>test_rejects_step_without_acceptance_command</code> · <code>test_rejects_duplicate_step_ids</code> · <code>test_plan_hash_is_stable</code> · <code>test_rejects_more_than_one_hundred_steps</code>.</td></tr>
+                <tr><td><code>RunStateTests</code></td><td><code>test_state_starts_as_draft</code> · <code>test_rejects_unsafe_run_id</code> · <code>test_rejects_unknown_terminal_result</code>.</td></tr>
+                <tr><td><code>RunStoreTests</code></td><td><code>test_atomic_state_round_trip</code> · <code>test_create_run_owns_expected_directories</code> · <code>test_append_event_writes_jsonl</code> · <code>test_rejects_nested_artifact_name</code> · <code>test_restore_runs_validates_snapshot_before_mutation</code>.</td></tr>
+              </tbody></table></div>
+            </div>
+          </details>
+
+          <details class="file" open>
+            <summary><span class="file-name">tests/test_controller.py</span><span class="file-role">19 orchestration tests</span></summary>
+            <div class="file-body">
+              <p><code>completed_result()</code>, <code>failed_result()</code>, <code>blocked_result()</code>, <code>plan_result()</code>, <code>verification()</code>이 결과 fixture를 만든다. <code>FakeRunner</code>, <code>FakeVerifier</code>, <code>FakeGitGuard</code>는 요청 기록과 callback 기반 변조 시뮬레이션을 제공한다. <code>setUp()</code>은 임시 root/config/store를, <code>controller()</code>는 주입된 테스트 컨트롤러를 만든다.</p>
+              <div class="table-wrap"><table><thead><tr><th>관심사</th><th>테스트 함수</th></tr></thead><tbody>
+                <tr><td>Plan / approve</td><td><code>test_plan_uses_read_only_and_saves_draft</code> · <code>test_approve_records_hash_and_git_fingerprint</code> · <code>test_approve_rebuilds_state_after_user_edits_draft_plan</code> · <code>test_unapproved_run_is_rejected</code> · <code>test_changed_git_baseline_blocks_run</code>.</td></tr>
+                <tr><td>성공 / retry / terminal</td><td><code>test_successful_step_and_final_verification_complete_run</code> · <code>test_verifier_failure_retries_then_succeeds</code> · <code>test_maximum_retries_fail_run</code> · <code>test_blocked_result_stops_without_verification</code> · <code>test_final_verification_failure_fails_run</code>.</td></tr>
+                <tr><td>경계 보호</td><td><code>test_out_of_scope_change_fails_run</code> · <code>test_controller_metadata_tampering_fails_run</code> · <code>test_git_head_change_fails_run</code> · <code>test_previous_evidence_tampering_fails_run</code> · <code>test_other_run_evidence_tampering_fails_and_restores</code> · <code>test_step_verifier_mutation_fails_run</code> · <code>test_verifier_git_index_mutation_fails_run</code>.</td></tr>
+                <tr><td>감사 / ID</td><td><code>test_successful_run_records_state_transition_events</code> · <code>test_default_run_ids_do_not_collide</code>.</td></tr>
+              </tbody></table></div>
+            </div>
+          </details>
+
+          <details class="file" open>
+            <summary><span class="file-name">tests/test_runner_verifier_git.py</span><span class="file-role">Runner 7 + Verifier 5 + Git 4 = 16 tests</span></summary>
+            <div class="file-body">
+              <p>실제 임시 executable과 subprocess, process group, 임시 Git repo를 사용해 단위 테스트보다 한 단계 넓은 시스템 경계를 확인한다. POSIX 전용 동작은 Windows에서 skip된다.</p>
+              <div class="table-wrap"><table><thead><tr><th>그룹</th><th>테스트 함수와 보장</th></tr></thead><tbody>
+                <tr><td><code>RunnerTests</code></td><td><code>test_build_command_uses_explicit_sandbox_and_schema</code> · <code>test_parse_event_stream_finds_terminal_event_and_malformed_line</code> · <code>test_parse_event_stream_prefers_last_terminal_event</code> · <code>test_run_captures_events_and_structured_final_output</code> · <code>test_malformed_event_prevents_process_success</code> · <code>test_event_and_final_output_are_bounded</code> · <code>test_descendant_holding_pipe_does_not_block_runner</code>.</td></tr>
+                <tr><td><code>VerifierTests</code></td><td><code>test_success</code> · <code>test_stops_on_first_failure</code> · <code>test_timeout</code> · <code>test_timeout_kills_child_process_group</code> · <code>test_output_is_truncated</code>.</td></tr>
+                <tr><td><code>GitGuardTests</code></td><td><code>_repo()</code>가 임시 commit을 만든다. <code>test_detects_new_and_preexisting_dirty_file_changes</code> · <code>test_fingerprint_is_stable_without_changes</code> · <code>test_detects_index_only_change</code> · <code>test_paths_outside_allowed</code>.</td></tr>
+              </tbody></table></div>
+            </div>
+          </details>
+
+          <details class="file" open>
+            <summary><span class="file-name">tests/test_cli.py</span><span class="file-role">8 routing and doctor tests</span></summary>
+            <div class="file-body">
+              <p><code>FakeController</code>의 <code>plan/approve/run/status</code>는 호출을 기록하고 예측 가능한 state를 반환한다. <code>CliTests.invoke()</code>는 stdout/stderr와 exit code를 캡처한다.</p>
+              <div class="table-wrap"><table><thead><tr><th>관심사</th><th>테스트 함수</th></tr></thead><tbody>
+                <tr><td>라우팅</td><td><code>test_plan_routes_goal_and_prints_json</code> · <code>test_approve_routes_run_id</code> · <code>test_run_exit_codes_follow_terminal_result</code> · <code>test_status_is_read_only_route</code>.</td></tr>
+                <tr><td>오류 / doctor</td><td><code>test_harness_error_returns_two</code> · <code>test_doctor_uses_diagnostic_result</code> · <code>test_doctor_checks_configured_codex_command</code> · <code>test_doctor_reports_missing_git_without_crashing</code>.</td></tr>
+              </tbody></table></div>
+            </div>
+          </details>
+          <details class="file"><summary><span class="file-name">tests/__init__.py</span><span class="file-role">테스트 패키지 표식</span></summary><div class="file-body"><p>내용이 없는 패키지 초기화 파일이다.</p></div></details>
+        </section>
+
+        <section id="safety">
+          <div class="section-head">
+            <div><div class="section-kicker">10 / SAFETY</div><h2>안전 경계의 층</h2></div>
+            <p class="section-intro">하나의 sandbox에만 의존하지 않고 입력 계약, 승인 baseline, 실행 후 측정, verifier 부작용 탐지를 겹쳐 놓았다.</p>
+          </div>
+          <div class="grid grid-3">
+            <article class="card"><h3>입력 단계</h3><p>정확한 JSON key, 안전한 상대 경로, reserved metadata 제외, argv 형태, 위험 executable/Git command 거부.</p></article>
+            <article class="card"><h3>승인 단계</h3><p>canonical plan hash와 branch/HEAD/porcelain/dirty content/index를 포함한 Git fingerprint 고정.</p></article>
+            <article class="card"><h3>실행 단계</h3><p>Codex event/output 제한, timeout process-group kill, 모든 run metadata snapshot 복원, allowed path 비교.</p></article>
+            <article class="card"><h3>검증 단계</h3><p>shell 없는 argv 실행, 첫 실패 중단, stdout/stderr bounded evidence, 검증 자체의 파일 및 Git 변경 거부.</p></article>
+            <article class="card"><h3>상태 단계</h3><p>state를 컨트롤러만 쓰며 전이마다 원자 저장하고 append-only event로 감사 흔적을 남긴다.</p></article>
+            <article class="card"><h3>신뢰 모델</h3><p>에이전트의 <code>changed_files</code>·<code>completed</code> 보고보다 GitGuard의 실제 관측과 Verifier 종료 코드를 우선한다.</p></article>
+          </div>
+        </section>
+
+        <section id="limits">
+          <div class="section-head">
+            <div><div class="section-kicker">11 / LIMITS</div><h2>현재 구현의 경계</h2></div>
+            <p class="section-intro">결함이라는 뜻보다는, 지금 코드가 제공하는 보장과 제공하지 않는 보장을 구분한 것이다.</p>
+          </div>
+          <div class="limit-list">
+            <div class="limit-item"><b>단일 레인 · 순차 실행</b><p>step 병렬 실행, dependency graph, worktree 분리 없이 plan 순서대로만 실행한다.</p></div>
+            <div class="limit-item"><b>중단 run 재개 없음</b><p><code>run()</code> 시작 조건이 approved뿐이라 failed/blocked/running 상태의 resume/recovery 경로가 없다.</p></div>
+            <div class="limit-item"><b>failed attempt 변경은 누적</b><p>retry 전에 repository를 되돌리지 않는다. 다음 attempt는 앞선 attempt가 남긴 허용 범위 내 변경 위에서 계속 작업한다.</p></div>
+            <div class="limit-item"><b>코드 변경 자동 복원 없음</b><p>out-of-scope 또는 verifier mutation을 탐지해 실패시키지만 repository 파일은 되돌리지 않는다. 자동 복원은 run metadata에만 적용된다.</p></div>
+            <div class="limit-item"><b><code>read_files</code>는 안내</b><p>실행 sandbox는 workspace 단위다. 나열된 파일만 읽도록 OS 수준에서 제한하지 않고 prompt로 지시한다.</p></div>
+            <div class="limit-item"><b><code>forbidden_changes</code>는 안내</b><p>일반 자연어 제약은 prompt에 들어가지만 기계적으로 해석하지 않는다. 실제 강제는 allowed path와 Git/meta guard가 담당한다.</p></div>
+            <div class="limit-item"><b>보고 경로와 실제 경로 미대조</b><p><code>StepResult.changed_files</code>는 계약상 검증되지만 GitGuard가 측정한 <code>changed_paths</code>와 동일한지 비교하지 않는다.</p></div>
+            <div class="limit-item"><b>final command는 0개 가능</b><p>step acceptance는 최소 1개지만 final acceptance는 빈 배열도 유효하며, 이 경우 모든 step 성공 후 final verification은 자동 성공한다.</p></div>
+            <div class="limit-item"><b>Schema validation의 역할 차이</b><p><code>state.schema.json</code>을 별도 validator로 실행하지 않는다. 저장 상태의 실제 검증은 Python 모델이 수행한다.</p></div>
+            <div class="limit-item"><b>프로세스 안전의 플랫폼 차이</b><p>POSIX는 process group 전체를 kill하지만 Windows 코드는 직접 process kill만 수행한다. 관련 child-process tests도 Windows에서는 skip된다.</p></div>
+          </div>
+        </section>
+
+        <section id="conclusion">
+          <div class="section-head">
+            <div><div class="section-kicker">12 / ASSESSMENT</div><h2>개발 상태 판단</h2></div>
+            <p class="section-intro">코드와 테스트만 기준으로 보면 “설계 초안” 단계는 지났고, 제한된 phase-one 워크플로를 실제로 수행할 수 있는 작은 MVP다.</p>
+          </div>
+          <div class="grid grid-2">
+            <article class="card accent"><h3>구현되어 있는 것</h3><p>계획 생성, 사용자 승인, 승인 무결성, step 순차 실행, 실패 evidence 기반 retry, blocker 전파, step/final 독립 검증, Git·index·metadata 경계, audit artifact, doctor CLI가 연결되어 있다.</p></article>
+            <article class="card"><h3>아직 확장하지 않은 것</h3><p>병렬성, 실행 재개, 자동 rollback, 세션 복구, UI/dashboard, 외부 orchestration, 복잡한 정책 엔진은 없다. 현재 구조는 이를 억지로 추상화하지 않고 한 controller lane에 집중한다.</p></article>
+          </div>
+          <div class="callout" style="margin-top:16px"><strong>한 줄 결론:</strong> 이 프로젝트는 “Codex가 작업하되 Codex가 자기 성공을 판정하지 못하게 하는” 개인용 순차 실행 하네스의 핵심 루프와 방어선이 구현된 상태다.</div>
+        </section>
+
+        <footer class="footer">
+          <p>이 문서는 <code>harness/</code>, <code>schemas/</code>, <code>scripts/</code>, <code>tests/</code>의 2026-08-02 작업 트리 내용을 기준으로 작성되었다. 제외 요청된 디렉터리와 기존 문서의 내용은 분석에 사용하지 않았다.</p>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const search = document.querySelector('#symbol-search');
+    const files = [...document.querySelectorAll('#symbol-files details.file')];
+    const count = document.querySelector('#search-count');
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLocaleLowerCase('ko');
+      let visible = 0;
+      files.forEach(file => {
+        const haystack = (file.dataset.search + ' ' + file.textContent).toLocaleLowerCase('ko');
+        const matched = !query || haystack.includes(query);
+        file.hidden = !matched;
+        if (matched) { visible += 1; if (query) file.open = true; }
+      });
+      count.textContent = query ? `${visible}개 파일 일치` : '전체 표시';
+    });
+
+    const navLinks = [...document.querySelectorAll('nav a')];
+    const sections = navLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+    const observer = new IntersectionObserver(entries => {
+      const current = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!current) return;
+      navLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${current.target.id}`));
+    }, { rootMargin: '-15% 0px -70%', threshold: [0, .2, .6] });
+    sections.forEach(section => observer.observe(section));
+  </script>
+</body>
+</html>
