@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harness Run State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "run_id",
+    "status",
+    "plan_sha256",
+    "approved_git_fingerprint",
+    "current_step",
+    "steps",
+    "terminal_result",
+    "blocked_reason",
+    "required_action"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "status": {
+      "enum": [
+        "draft",
+        "approved",
+        "running",
+        "verifying",
+        "completed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "plan_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "approved_git_fingerprint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "current_step": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "status",
+          "attempts",
+          "summary",
+          "error"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "verifying",
+              "retrying",
+              "completed",
+              "failed",
+              "blocked"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "terminal_result": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "blocked_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "required_action": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}
