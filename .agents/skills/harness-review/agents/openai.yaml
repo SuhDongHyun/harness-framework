@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harness Review"
+  short_description: "Review harness changes and evidence"
+  default_prompt: "Use $harness-review to inspect harness changes, verification evidence, and scope compliance."

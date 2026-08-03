@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harness Plan"
+  short_description: "Create an executable Codex harness plan"
+  default_prompt: "Use $harness-plan to create a draft harness plan without editing project files."
