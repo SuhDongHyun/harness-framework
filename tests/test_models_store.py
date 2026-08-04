@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from harness.domain import Plan, RunState, ValidationError
+from harness.orchestration.planning import step_document
 from harness.storage import RunStore
 
 
@@ -105,6 +106,15 @@ class PlanModelTests(unittest.TestCase):
         first = Plan.from_dict(valid_plan())
         second = Plan.from_dict(json.loads(json.dumps(valid_plan())))
         self.assertEqual(first.sha256(), second.sha256())
+
+    def test_step_document_includes_safety_and_verification_contract(self):
+        step = Plan.from_dict(valid_plan()).steps[0]
+        document = step_document(step)
+        self.assertIn("## Objective", document)
+        self.assertIn("## Allowed paths", document)
+        self.assertIn("## Acceptance commands", document)
+        self.assertIn("## Forbidden changes", document)
+        self.assertIn("Do not add dependencies", document)
 
     def test_rejects_more_than_one_hundred_steps(self):
         payload = valid_plan()
