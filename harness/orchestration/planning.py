@@ -39,6 +39,7 @@ def step_document(step: PlanStep) -> str:
     commands = "\n".join(
         f"- `{' '.join(command)}`" for command in step.acceptance_commands
     )
+    forbidden = "\n".join(f"- {value}" for value in step.forbidden_changes)
     return (
         f"# {step.id}: {step.name}\n\n"
         f"## Objective\n\n{step.objective}\n\n"
@@ -51,5 +52,7 @@ def step_document(step: PlanStep) -> str:
         + "\n".join(f"- `{path}`" for path in step.allowed_paths)
         + "\n\n## Acceptance commands\n\n"
         + (commands or "- None")
+        + "\n\n## Forbidden changes\n\n"
+        + (forbidden or "- None")
         + "\n"
     )
