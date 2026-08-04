@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import webbrowser
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -60,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
     ui = commands.add_parser("ui", help="show a read-only run dashboard")
     ui.add_argument("run_id")
     ui.add_argument("--port", type=int, default=0)
+    ui.add_argument(
+        "--open-browser",
+        action="store_true",
+        help="open the dashboard in the default browser",
+    )
     commands.add_parser("doctor", help="diagnose local harness prerequisites")
     return parser
 
@@ -86,6 +92,8 @@ def main(
                 port=args.port,
             ).start()
             _print_json({"run_id": args.run_id, "ui": server.url})
+            if args.open_browser:
+                _open_browser(server.url)
             _wait_for_dashboard(server)
             return 0
         server: DashboardServer | None = None
@@ -228,6 +236,16 @@ def run_doctor(root: Path) -> dict[str, object]:
         )
     )
     return {"ok": all(bool(check["ok"]) for check in checks), "checks": checks}
+
+
+def _open_browser(url: str) -> None:
+    try:
+        opened = webbrowser.open(url)
+    except (OSError, webbrowser.Error) as error:
+        print(f"harness UI browser launch failed: {error}; open {url}", file=sys.stderr)
+        return
+    if not opened:
+        print(f"harness UI browser launch unavailable; open {url}", file=sys.stderr)
 
 
 def _check(name: str, ok: bool, detail: str) -> dict[str, object]:
