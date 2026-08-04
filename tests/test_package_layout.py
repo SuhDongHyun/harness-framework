@@ -18,6 +18,8 @@ class PackageLayoutTests(unittest.TestCase):
             SKILLS / "harness-approve" / "agents" / "openai.yaml"
         ).read_text()
         self.assertIn("ui <run-id> --open-browser", plan)
+        self.assertIn("scoped sandbox escalation", plan)
+        self.assertIn("before the first attempt", plan)
         self.assertIn("approve <run-id>", approve)
         self.assertIn("run <run-id>", approve)
         self.assertIn("review <run-id>", approve)
