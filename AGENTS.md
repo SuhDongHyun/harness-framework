@@ -22,23 +22,34 @@ evidence.
 
 ## Current workflow
 
-1. `plan` runs Codex read-only and stores a draft plan.
-2. The user reviews or edits the draft, then `approve` records the plan hash and
-   current Git working-tree fingerprint.
-3. `run` rejects a changed approval baseline and retries failed execution or
+1. `$harness-plan` checks prerequisites, runs Codex read-only, stores one draft
+   run for one user goal, and opens its read-only localhost dashboard.
+2. The user reviews or edits the draft, then explicitly invokes
+   `$harness-approve <run-id>`.
+3. The approval skill records the plan hash and current Git working-tree
+   fingerprint, executes the run, and performs one independent review after a
+   terminal result.
+4. `run` rejects a changed approval baseline and retries failed execution or
    verification up to the configured limit. It runs sequentially by default;
    opt-in parallel writers execute dependency-ready, path-disjoint steps in
    isolated repository copies before controller integration.
-4. The controller independently runs per-step and final acceptance commands. A
+5. The controller independently runs per-step and final acceptance commands. A
    command failure, out-of-scope edit, Git index/HEAD change, or run-metadata
    tampering prevents completion.
-5. `status` reads the controller-owned run state and evidence remains under
+6. `status` reads the controller-owned run state and evidence remains under
    `.harness/runs/<run-id>/`.
-6. `review` runs read-only with its own model profile and stores an advisory
+7. `review` runs read-only with its own model profile and stores an advisory
    report without changing controller-owned terminal state.
-7. `run --ui` and `ui` expose a localhost-only, read-only progress dashboard.
+8. `run --ui` and `ui` expose a localhost-only, read-only progress dashboard.
 
-## Commands
+## User workflow
+
+```text
+$harness-plan "<goal>"
+$harness-approve <run-id>
+```
+
+## Internal CLI
 
 ```bash
 python3 scripts/harness.py doctor
@@ -52,12 +63,15 @@ python3 scripts/harness.py ui <run-id>
 
 ## Workflow routing
 
-- Use `$harness-plan` to create and inspect a draft execution plan without editing
-  project code.
+- Use `$harness-plan` to create and inspect one draft run and automatically open
+  its dashboard without editing project code.
+- Use `$harness-approve` only when the user explicitly approves an exact run ID;
+  it sequences approval, execution, and one terminal review.
 - Use `$harness-review` to review scope, state, Git changes, and verification
   evidence without editing.
-- Use `harness/orchestration/controller.py`, `harness/domain/`, the schemas, and
-  the tests as the source of truth for runtime behavior and contracts.
+- Use `HARNESS_DESIGN.md`, `harness/orchestration/controller.py`,
+  `harness/domain/`, the schemas, and the tests as the source of truth for
+  runtime behavior and contracts.
 
 ## Verification
 

@@ -19,7 +19,7 @@ def review_prompt(
     )
     return (
         f"Review harness run {run_id} without editing files. The controller "
-        f"reports status {state.status}. Read AGENTS.md, docs/HARNESS_DESIGN.md, "
+        f"reports status {state.status}. Read AGENTS.md, HARNESS_DESIGN.md, "
         f".harness/runs/{run_id}/plan.json, state.json, relevant evidence, and "
         "the actual Git changes. Check allowed_paths, independent verification, "
         "missing or stale evidence, and whether the controller-owned status is "

@@ -29,48 +29,48 @@ Codex CLI로 코드 작업을 계획하고, 사용자의 승인을 받은 뒤, �
 
 ## 사용법
 
-먼저 로컬 환경, 설정, 스키마를 확인합니다.
+일반 사용자는 저장소 스킬 두 개로 전체 흐름을 진행합니다. 하나의 작업 목표가
+하나의 `run-id`가 되며, 그 아래에 계획, step 재시도, 검증, 최종 상태와 review가
+함께 보존됩니다.
+
+```text
+$harness-plan "youtube URL 영상 내용 분석 프로그램 만들어줘"
+```
+
+이 스킬은 `doctor` 사전점검 후 읽기 전용 계획을 만들고 해당 run의 localhost UI를
+백그라운드로 시작해 기본 브라우저에서 엽니다. 브라우저 실행을 지원하지 않는 환경이면
+접속 URL을 반환합니다. UI에서 계획과 `allowed_paths`, Acceptance Criteria를 확인하고
+필요하면 승인 전에 `plan.json`을 수정합니다.
+
+```text
+$harness-approve <run-id>
+```
+
+명시적으로 이 스킬을 호출하면 정확히 그 run을 승인한 뒤 `run`을 실행하고, 결과가
+`completed`, `failed`, `blocked` 중 하나에 도달하면 독립 `review`까지 자동으로
+수행합니다. UI는 전체 과정을 계속 갱신하며 백그라운드 UI 프로세스를 중지할 때까지
+유지됩니다.
+
+승인 이후 계획 또는 Git 작업 트리가 달라지면 실행은 차단됩니다. review는 자문
+보고서만 저장하며 controller의 최종 상태를 바꾸지 않습니다.
+
+### 내부 CLI
+
+스킬은 다음 CLI를 순서대로 호출합니다. 자동화, 진단 또는 복구 시 직접 사용할 수
+있습니다.
 
 ```bash
 python3 scripts/harness.py doctor
-```
-
-목표로부터 초안 계획을 만듭니다. 이 단계의 Codex는 저장소를 읽기 전용으로
-사용합니다.
-
-```bash
 python3 scripts/harness.py plan "<goal>"
-```
-
-출력된 `<run-id>`의 `.harness/runs/<run-id>/plan.json`과 `steps/` 문서를
-검토합니다. 초안은 승인 전에 직접 수정할 수 있으며 스키마를 만족해야 합니다.
-특히 각 단계의 변경 허용 범위와 검증 명령을 확인한 뒤 승인합니다.
-
-```bash
 python3 scripts/harness.py approve <run-id>
-```
-
-승인 이후 계획 또는 Git 작업 트리가 달라지면 실행은 차단됩니다. 그대로라면
-단계를 순서대로 실행하고 각 단계의 검증을 통과한 후 최종 검증을 수행합니다.
-
-```bash
 python3 scripts/harness.py run <run-id>
 python3 scripts/harness.py status <run-id>
 python3 scripts/harness.py review <run-id>
+python3 scripts/harness.py ui <run-id> --open-browser
 ```
 
-`status`와 `run`은 JSON을 출력합니다. 최종 상태는 `completed`, `failed`,
-`blocked` 중 하나이며, 차단된 경우 `blocked_reason`과 필요한 조치를 함께
-확인할 수 있습니다.
-
-실행 진행을 브라우저에서 자동 갱신해 보려면 `--ui`를 사용합니다. 브라우저는
-읽기 전용 snapshot을 750ms마다 갱신하며, 연결이 끊기면 재연결 상태를 표시합니다.
-실행이 끝난 뒤에도 화면은 Ctrl-C로 종료할 때까지 유지됩니다.
-
-```bash
-python3 scripts/harness.py run <run-id> --ui
-python3 scripts/harness.py ui <run-id>
-```
+`status`와 `run`은 JSON을 출력합니다. 차단된 경우 `blocked_reason`과 필요한 조치를
+함께 확인할 수 있습니다. UI는 읽기 전용 snapshot을 750ms마다 갱신합니다.
 
 ## 실행 방식
 
@@ -165,6 +165,8 @@ index, 하네스 기록의 변경은 실패로 감지하지만 저장소 밖에�
 핵심 코드는 책임별로 `domain`, `orchestration`, `agents`, `safety`, `storage`,
 `ui` 패키지에 나뉩니다. `HarnessController`만 run/step 상태를 변경하고 다른
 패키지는 검증된 값, 실행 결과 또는 읽기 전용 정보를 반환합니다.
+저장소 전체에 적용되는 권한과 패키지 경계는 루트의 `HARNESS_DESIGN.md`에
+정리되어 있습니다.
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v

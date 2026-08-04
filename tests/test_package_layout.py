@@ -3,9 +3,26 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HARNESS = ROOT / "harness"
+SKILLS = ROOT / ".agents" / "skills"
 
 
 class PackageLayoutTests(unittest.TestCase):
+    def test_harness_design_is_repository_level(self):
+        self.assertTrue((ROOT / "HARNESS_DESIGN.md").is_file())
+        self.assertFalse((ROOT / "docs" / "HARNESS_DESIGN.md").exists())
+
+    def test_skill_first_workflow_is_available(self):
+        plan = (SKILLS / "harness-plan" / "SKILL.md").read_text()
+        approve = (SKILLS / "harness-approve" / "SKILL.md").read_text()
+        approve_metadata = (
+            SKILLS / "harness-approve" / "agents" / "openai.yaml"
+        ).read_text()
+        self.assertIn("ui <run-id> --open-browser", plan)
+        self.assertIn("approve <run-id>", approve)
+        self.assertIn("run <run-id>", approve)
+        self.assertIn("review <run-id>", approve)
+        self.assertIn("allow_implicit_invocation: false", approve_metadata)
+
     def test_top_level_contains_only_composition_modules(self):
         modules = {path.name for path in HARNESS.glob("*.py")}
         self.assertEqual({"__init__.py", "cli.py", "config.py"}, modules)

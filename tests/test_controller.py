@@ -246,6 +246,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual("high", runner.requests[1].reasoning_effort)
         self.assertTrue(runner.requests[1].subagents_enabled)
         self.assertIn("never print a complete Git diff", runner.requests[1].prompt)
+        self.assertIn("Read AGENTS.md, HARNESS_DESIGN.md", runner.requests[1].prompt)
         self.assertEqual(before, controller.status(run_id).to_dict())
         self.assertTrue(
             self.store.evidence_path(run_id, "review-01.json").is_file()
