@@ -7,6 +7,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ..agents.process import (
     bounded_text,
@@ -14,6 +15,14 @@ from ..agents.process import (
     finish_readers,
     terminate_process_tree,
 )
+
+
+class VerificationSandbox(Protocol):
+    def popen(
+        self,
+        argv: Sequence[str],
+        cwd: Path,
+    ) -> subprocess.Popen[bytes]: ...
 
 
 @dataclass(frozen=True)
@@ -56,9 +65,15 @@ class VerificationResult:
 
 
 class Verifier:
-    def __init__(self, timeout_seconds: int, max_output_bytes: int):
+    def __init__(
+        self,
+        timeout_seconds: int,
+        max_output_bytes: int,
+        sandbox: VerificationSandbox | None = None,
+    ):
         self.timeout_seconds = timeout_seconds
         self.max_output_bytes = max_output_bytes
+        self.sandbox = sandbox
 
     def verify(
         self, commands: Sequence[Sequence[str]], cwd: Path
@@ -72,14 +87,17 @@ class Verifier:
                 raise ValueError("verification command must be a non-empty argv array")
             started = time.monotonic()
             try:
-                process = subprocess.Popen(
-                    list(argv),
-                    cwd=cwd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=False,
-                    start_new_session=(os.name != "nt"),
-                )
+                if self.sandbox is None:
+                    process = subprocess.Popen(
+                        list(argv),
+                        cwd=cwd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        shell=False,
+                        start_new_session=(os.name != "nt"),
+                    )
+                else:
+                    process = self.sandbox.popen(argv, cwd)
                 stdout_result: list[str] = []
                 stderr_result: list[str] = []
                 reader_errors: list[str] = []

@@ -1,12 +1,13 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from harness.cli import _open_browser, build_parser, main, run_doctor
+from harness.cli import _open_browser, build_parser, main, run_doctor, run_setup
 from harness.domain import Plan, RunState
 from harness.orchestration import HarnessError
 from tests.test_models_store import valid_plan
@@ -174,6 +175,14 @@ class CliTests(unittest.TestCase):
                     "harness.cli.shutil.which",
                     return_value="/bin/custom-codex",
                 ) as which,
+                patch(
+                    "harness.cli.harness_codex_home_status",
+                    return_value=(True, "ready"),
+                ),
+                patch(
+                    "harness.cli.codex_login_status",
+                    return_value=(True, "logged in"),
+                ),
             ):
                 report = run_doctor(root)
             which.assert_called_once_with("custom-codex")
@@ -205,6 +214,48 @@ class CliTests(unittest.TestCase):
                 check for check in report["checks"] if check["name"] == "Git repository"
             )
             self.assertFalse(git_check["ok"])
+
+    def test_setup_prepares_private_runtime_home_and_prints_exact_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+            (root / ".harness").mkdir()
+            (root / ".harness" / "config.toml").write_text(
+                '[harness]\ncodex_command = "custom-codex"\n'
+            )
+            codex_home = base / "state" / "codex-home"
+            with patch.dict(
+                os.environ,
+                {"HARNESS_CODEX_HOME": str(codex_home)},
+                clear=False,
+            ):
+                report = run_setup(root)
+            self.assertEqual(0o700, codex_home.stat().st_mode & 0o777)
+            self.assertEqual(str(codex_home), report["codex_home"])
+            self.assertIn("custom-codex login", report["login_command"])
+            self.assertIn(str(codex_home), report["codex_config_snippet"])
+
+    def test_production_commands_fail_before_state_change_when_runtime_is_missing(self):
+        stderr = io.StringIO()
+        with (
+            patch(
+                "harness.cli.HarnessConfig.load",
+                return_value=type("Config", (), {"codex_command": "codex"})(),
+            ),
+            patch(
+                "harness.cli.resolve_harness_codex_home",
+                return_value=Path("/state/harness-codex-home"),
+            ),
+            patch(
+                "harness.cli.harness_codex_home_status",
+                return_value=(False, "auth.json is missing"),
+            ),
+            redirect_stderr(stderr),
+        ):
+            code = main(["approve", "run-1"], root=Path("/repo"))
+        self.assertEqual(2, code)
+        self.assertIn("scripts/harness.py setup", stderr.getvalue())
 
 
 if __name__ == "__main__":

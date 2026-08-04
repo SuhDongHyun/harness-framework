@@ -10,6 +10,42 @@ the Personal Codex Harness.
 - `Verifier` command results and Git snapshots decide whether work completed.
 - The progress UI is non-authoritative and exposes no mutation endpoint.
 
+## Linux/WSL runtime boundary
+
+The supported host platform is Linux, including WSL. Every production Codex
+invocation uses one dedicated persistent home outside the repository. Its
+default is `${XDG_STATE_HOME:-$HOME/.local/state}/personal-codex-harness/codex-home`;
+`HARNESS_CODEX_HOME` may select another absolute path. The `$harness-setup` skill
+creates the leaf directory with mode `0700`, runs the separate login flow, and
+atomically merges the exact path into the outer Codex configuration. It never
+copies authentication material from another home or replaces unrelated config.
+
+The outer Codex session may write the repository and exactly that dedicated
+state root. The Python controller itself is not launched with unrestricted host
+access. Before `plan`, `approve`, `run`, or `review` can mutate state, CLI
+preflight requires the dedicated directory to be writable in the active sandbox
+and requires a non-symlink `auth.json` inaccessible to group and other users.
+It also executes `codex login status` against that exact home before state
+changes.
+
+Nested Codex processes receive the dedicated path as `CODEX_HOME`, run
+ephemerally without user configuration or rules, use `approval_policy=never`,
+and reset `sandbox_workspace_write.writable_roots` to an empty array. Network is
+disabled for inner command execution. The role sandbox remains authoritative:
+planner and reviewer are read-only; executor is workspace-write only in its
+assigned working tree.
+
+Controller-owned verification commands run through `codex sandbox` with the
+Linux `:workspace` permission profile, no extra writable roots, and no network.
+The verifier removes `CODEX_HOME` from the verified command's environment. This
+prevents verification from inheriting the outer state directory as a write
+target, while Git and run-metadata guards still detect repository mutations.
+Harness runtime-path and OpenAI API-key variables are also excluded from nested
+agent shells and verification commands.
+The workspace profile is not a complete confidentiality boundary for all
+host-readable files, so Acceptance Criteria remain explicit, shell-free,
+user-reviewed argv.
+
 ## Package boundaries
 
 - `harness/domain/` owns validated plans, execution results, reviews, run state,
@@ -53,6 +89,10 @@ editing project files. Only an explicit `$harness-approve <run-id>` invocation
 authorizes the workflow layer to call `approve`, `run`, and then `review` for
 that exact run. These commands remain separate controller operations; the skill
 only sequences them and cannot replace controller-owned evidence or state.
+If runtime setup is missing, the planning skill routes the user to
+`$harness-setup`. That setup skill may request escalation only for the exact
+directory-creation, dedicated-login, or atomic config-merge command. It never
+escalates `plan`, `run`, or `review` as a whole.
 
 ## Review
 

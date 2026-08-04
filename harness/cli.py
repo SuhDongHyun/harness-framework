@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -11,7 +12,14 @@ import webbrowser
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from .agents import CodexRunner
+from .agents import (
+    CodexRunner,
+    CodexSandbox,
+    codex_login_status,
+    harness_codex_home_status,
+    prepare_harness_codex_home,
+    resolve_harness_codex_home,
+)
 from .config import HarnessConfig
 from .domain import ValidationError
 from .orchestration import HarnessController, HarnessError
@@ -27,13 +35,19 @@ def build_controller(
     event_sink: Callable[[dict[str, object]], None] | None = None,
 ) -> HarnessController:
     config = HarnessConfig.load(root / ".harness" / "config.toml")
+    codex_home = resolve_harness_codex_home()
     return HarnessController(
         root=root,
         store=RunStore(root / ".harness" / "runs"),
-        runner=CodexRunner(config.codex_command, event_sink=event_sink),
+        runner=CodexRunner(
+            config.codex_command,
+            event_sink=event_sink,
+            codex_home=codex_home,
+        ),
         verifier=Verifier(
             timeout_seconds=config.verification_timeout_seconds,
             max_output_bytes=config.max_output_bytes,
+            sandbox=CodexSandbox(config.codex_command, codex_home),
         ),
         git_guard=GitGuard(root),
         config=config,
@@ -67,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="open the dashboard in the default browser",
     )
     commands.add_parser("doctor", help="diagnose local harness prerequisites")
+    commands.add_parser(
+        "setup",
+        help="prepare the Linux/WSL Codex runtime home and print setup steps",
+    )
     return parser
 
 
@@ -83,6 +101,14 @@ def main(
         _print_json(report)
         return 0 if report["ok"] else 2
     try:
+        if args.command == "setup":
+            _print_json(run_setup(project_root))
+            return 0
+        if (
+            controller_factory is build_controller
+            and args.command in {"plan", "approve", "run", "review"}
+        ):
+            _require_codex_runtime_home(project_root)
         if args.command == "ui":
             config = HarnessConfig.load(project_root / ".harness" / "config.toml")
             server = DashboardServer(
@@ -203,6 +229,21 @@ def run_doctor(root: Path) -> dict[str, object]:
             codex_path or f"{codex_command} not found",
         )
     )
+    try:
+        codex_home = resolve_harness_codex_home()
+        codex_home_ok, codex_home_detail = harness_codex_home_status(codex_home)
+    except (OSError, ValueError) as error:
+        codex_home_ok = False
+        codex_home_detail = str(error)
+    checks.append(
+        _check("Harness Codex runtime home", codex_home_ok, codex_home_detail)
+    )
+    if codex_home_ok:
+        login_ok, login_detail = codex_login_status(codex_command, codex_home)
+    else:
+        login_ok = False
+        login_detail = "Harness Codex runtime home must be ready first"
+    checks.append(_check("Harness Codex login", login_ok, login_detail))
 
     schema_paths = [
         root / "schemas" / "plan.schema.json",
@@ -238,6 +279,40 @@ def run_doctor(root: Path) -> dict[str, object]:
     return {"ok": all(bool(check["ok"]) for check in checks), "checks": checks}
 
 
+def run_setup(root: Path) -> dict[str, object]:
+    if not sys.platform.startswith("linux"):
+        raise HarnessError("setup supports Linux and WSL only")
+    config = HarnessConfig.load(root / ".harness" / "config.toml")
+    codex_home = resolve_harness_codex_home()
+    try:
+        codex_home.relative_to(root.resolve())
+    except ValueError:
+        pass
+    else:
+        raise HarnessError("Harness Codex runtime home must remain outside the repository")
+    prepare_harness_codex_home(codex_home)
+    config_snippet = (
+        "[sandbox_workspace_write]\n"
+        f"writable_roots = [{json.dumps(str(codex_home))}]"
+    )
+    login_command = shlex.join(
+        ["env", f"CODEX_HOME={codex_home}", config.codex_command, "login"]
+    )
+    return {
+        "platform": "linux-wsl",
+        "codex_home": str(codex_home),
+        "status": "directory-ready",
+        "login_command": login_command,
+        "codex_config_snippet": config_snippet,
+        "next_steps": [
+            "Run login_command in a trusted terminal",
+            "Add codex_config_snippet to the Codex config used for this project",
+            "Restart Codex so the writable root becomes active",
+            "Run `python3 scripts/harness.py doctor`",
+        ],
+    }
+
+
 def _open_browser(url: str) -> None:
     try:
         opened = webbrowser.open(url)
@@ -246,6 +321,28 @@ def _open_browser(url: str) -> None:
         return
     if not opened:
         print(f"harness UI browser launch unavailable; open {url}", file=sys.stderr)
+
+
+def _require_codex_runtime_home(root: Path) -> None:
+    config = HarnessConfig.load(root / ".harness" / "config.toml")
+    codex_home = resolve_harness_codex_home()
+    ok, detail = harness_codex_home_status(codex_home)
+    if not ok:
+        raise HarnessError(
+            f"Harness Codex runtime home is not ready: {detail}. "
+            "Run `python3 scripts/harness.py setup`, complete the printed login and "
+            "writable-root steps, restart Codex, and run doctor again."
+        )
+    login_ok, login_detail = codex_login_status(
+        config.codex_command,
+        codex_home,
+    )
+    if not login_ok:
+        raise HarnessError(
+            f"Harness Codex login is not ready: {login_detail}. "
+            "Run the login command printed by `python3 scripts/harness.py setup` "
+            "and run doctor again."
+        )
 
 
 def _check(name: str, ok: bool, detail: str) -> dict[str, object]:
