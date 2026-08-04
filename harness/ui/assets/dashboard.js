@@ -2,6 +2,9 @@ const $ = (id) => document.getElementById(id);
 let sequence = 0;
 let liveEvents = [];
 let initialized = false;
+let renderedPlan = "";
+let approvalCommand = "";
+let copyResetTimer;
 
 const text = (node, value) => { node.textContent = value ?? "—"; };
 const formatNumber = (value) => Number(value || 0).toLocaleString();
@@ -36,6 +39,146 @@ function renderSteps(data) {
     dot.textContent = step.status === "completed" ? "✓" : step.status === "failed" || step.status === "blocked" ? "!" : "";
     row.append(number, name, dot);
     node.append(row);
+  }
+}
+
+function formatCommand(command) {
+  if (!Array.isArray(command)) return String(command ?? "");
+  return command.map((part) => {
+    const value = String(part);
+    return /^[A-Za-z0-9_./:=+,-]+$/.test(value) ? value : JSON.stringify(value);
+  }).join(" ");
+}
+
+function appendPlanList(node, label, values, commandList = false) {
+  const section = document.createElement("section");
+  section.className = "plan-field";
+  const title = document.createElement("h4");
+  title.textContent = label;
+  const list = document.createElement("ul");
+  if (!Array.isArray(values) || !values.length) {
+    const item = document.createElement("li");
+    item.className = "muted";
+    item.textContent = "None";
+    list.append(item);
+  } else {
+    for (const value of values) {
+      const item = document.createElement("li");
+      const content = document.createElement(commandList ? "code" : "span");
+      content.textContent = commandList ? formatCommand(value) : String(value);
+      item.append(content);
+      list.append(item);
+    }
+  }
+  section.append(title, list);
+  node.append(section);
+}
+
+function fallbackCopy(value) {
+  const input = document.createElement("textarea");
+  input.className = "copy-source";
+  input.value = value;
+  input.setAttribute("readonly", "");
+  document.body.append(input);
+  input.select();
+  const copied = document.execCommand("copy");
+  input.remove();
+  if (!copied) throw new Error("clipboard copy was rejected");
+}
+
+async function copyApprovalCommand() {
+  if (!approvalCommand) return;
+  const button = $("copy-approval");
+  const feedback = $("copy-feedback");
+  clearTimeout(copyResetTimer);
+  button.disabled = true;
+  try {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(approvalCommand);
+      } catch (error) {
+        fallbackCopy(approvalCommand);
+      }
+    } else {
+      fallbackCopy(approvalCommand);
+    }
+    button.textContent = "COPIED";
+    feedback.textContent = "Paste the command into your Codex conversation.";
+  } catch (error) {
+    button.textContent = "COPY FAILED";
+    feedback.textContent = `Copy manually: ${approvalCommand}`;
+  }
+  copyResetTimer = setTimeout(() => {
+    button.textContent = approvalCommand ? "COPY APPROVAL COMMAND" : "APPROVAL UNAVAILABLE";
+    button.disabled = !approvalCommand;
+    feedback.textContent = "";
+  }, 1800);
+}
+
+function renderPlan(data) {
+  const plan = data.plan || {};
+  const signature = JSON.stringify(plan);
+  if (signature === renderedPlan) return;
+  renderedPlan = signature;
+  text($("plan-goal"), plan.goal || "Plan is not available yet");
+  text($("plan-status"), String(plan.status || data.state?.status || "waiting").toUpperCase());
+  const approvalButton = $("copy-approval");
+  const approvable = data.state?.status === "draft" && Boolean(data.run_id);
+  approvalCommand = approvable ? `$harness-approve ${data.run_id}` : "";
+  approvalButton.disabled = !approvable;
+  approvalButton.textContent = approvable ? "COPY APPROVAL COMMAND" : "APPROVAL UNAVAILABLE";
+  approvalButton.title = approvalCommand || "Only draft runs can be approved";
+  const stepsNode = $("plan-steps");
+  stepsNode.replaceChildren();
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  for (const [index, step] of steps.entries()) {
+    const details = document.createElement("details");
+    details.className = "plan-step";
+    details.open = index === 0;
+    const summary = document.createElement("summary");
+    const identifier = document.createElement("span");
+    identifier.className = "mono accent";
+    identifier.textContent = step.id || String(index + 1).padStart(2, "0");
+    const name = document.createElement("strong");
+    name.textContent = step.name || "Unnamed step";
+    const dependency = document.createElement("span");
+    dependency.className = "dependency mono";
+    dependency.textContent = Array.isArray(step.depends_on) && step.depends_on.length
+      ? `after ${step.depends_on.join(", ")}` : "no dependencies";
+    summary.append(identifier, name, dependency);
+
+    const body = document.createElement("div");
+    body.className = "plan-step-body";
+    const objective = document.createElement("p");
+    objective.className = "objective";
+    objective.textContent = step.objective || "No objective provided";
+    const fields = document.createElement("div");
+    fields.className = "plan-fields";
+    appendPlanList(fields, "READ FILES", step.read_files);
+    appendPlanList(fields, "ALLOWED PATHS", step.allowed_paths);
+    appendPlanList(fields, "FORBIDDEN CHANGES", step.forbidden_changes);
+    appendPlanList(fields, "ACCEPTANCE COMMANDS", step.acceptance_commands, true);
+    body.append(objective, fields);
+    details.append(summary, body);
+    stepsNode.append(details);
+  }
+
+  const finalCommands = $("final-acceptance-commands");
+  finalCommands.replaceChildren();
+  const commands = Array.isArray(plan.final_acceptance_commands)
+    ? plan.final_acceptance_commands : [];
+  for (const command of commands) {
+    const item = document.createElement("li");
+    const code = document.createElement("code");
+    code.textContent = formatCommand(command);
+    item.append(code);
+    finalCommands.append(item);
+  }
+  if (!commands.length) {
+    const item = document.createElement("li");
+    item.className = "muted";
+    item.textContent = "None";
+    finalCommands.append(item);
   }
 }
 
@@ -110,6 +253,7 @@ function render(data) {
   const current = steps.find((step) => step.id === state.current_step);
   text($("current-step"), current ? `${current.id} · attempt ${current.attempts}` : state.status || "waiting");
   renderSteps(data);
+  renderPlan(data);
   renderActivity(data);
   const profile = data.profiles?.executor || {};
   renderList($("run-metrics"), [
@@ -149,5 +293,6 @@ async function refresh() {
 }
 
 setInterval(() => text($("clock"), new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"})), 1000);
+$("copy-approval").addEventListener("click", copyApprovalCommand);
 refresh();
 setInterval(refresh, 750);

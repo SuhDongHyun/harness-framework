@@ -50,12 +50,37 @@ class DashboardServerTests(unittest.TestCase):
         with urllib.request.urlopen(server.url, timeout=2) as response:
             html = response.read().decode()
         self.assertIn("LIVE ACTIVITY", html)
+        self.assertIn("EXECUTION PLAN", html)
+        self.assertIn('id="plan-steps"', html)
+        self.assertIn('id="copy-approval"', html)
+        self.assertIn('aria-live="polite"', html)
+        with urllib.request.urlopen(
+            server.url + "dashboard.js", timeout=2
+        ) as response:
+            javascript = response.read().decode()
+        for field in (
+            "objective",
+            "read_files",
+            "allowed_paths",
+            "forbidden_changes",
+            "acceptance_commands",
+            "final_acceptance_commands",
+        ):
+            self.assertIn(field, javascript)
+        self.assertIn("$harness-approve", javascript)
+        self.assertIn("navigator.clipboard", javascript)
+        self.assertIn('addEventListener("click", copyApprovalCommand)', javascript)
         with urllib.request.urlopen(
             server.url + "api/snapshot?after=0", timeout=2
         ) as response:
             payload = json.loads(response.read())
         self.assertEqual("run-1", payload["run_id"])
         self.assertEqual("draft", payload["state"]["status"])
+        self.assertEqual("Build a small feature", payload["plan"]["goal"])
+        self.assertEqual(
+            ["Do not add dependencies"],
+            payload["plan"]["steps"][0]["forbidden_changes"],
+        )
         self.assertEqual("turn.started", payload["live"]["events"][0]["event"]["type"])
 
         broker.publish(

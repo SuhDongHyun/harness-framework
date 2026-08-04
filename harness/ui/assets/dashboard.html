@@ -31,6 +31,26 @@
       <section><h2>TOKEN USAGE</h2><dl id="token-usage"></dl></section>
       <section><h2>VERIFICATION</h2><dl id="verification"></dl></section>
     </aside>
+    <section class="plan panel" aria-labelledby="plan-title">
+      <div class="plan-heading">
+        <div>
+          <h2 id="plan-title">EXECUTION PLAN</h2>
+          <p id="plan-goal">Loading plan</p>
+        </div>
+        <div class="plan-actions">
+          <span id="plan-status" class="plan-status mono">LOADING</span>
+          <button id="copy-approval" class="copy-approval" type="button" disabled>
+            APPROVAL UNAVAILABLE
+          </button>
+          <span id="copy-feedback" class="copy-feedback" aria-live="polite"></span>
+        </div>
+      </div>
+      <div id="plan-steps" class="plan-steps"></div>
+      <section class="final-acceptance" aria-labelledby="final-acceptance-title">
+        <h3 id="final-acceptance-title">FINAL ACCEPTANCE</h3>
+        <ul id="final-acceptance-commands" class="command-list"></ul>
+      </section>
+    </section>
     <section class="console panel">
       <h2>LATEST OUTPUT</h2>
       <pre id="latest-output">Waiting for verification evidence</pre>
