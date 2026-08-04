@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Harness Progress</title>
+  <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>HARNESS</strong>
+    <span id="run-id" class="mono muted">loading</span>
+    <div class="run-progress"><b id="run-status">LOADING</b><div class="bar"><i id="run-bar"></i></div></div>
+    <span id="branch" class="mono muted">branch —</span>
+    <span id="clock" class="mono">--:--</span>
+  </header>
+  <main class="shell">
+    <aside class="steps panel">
+      <h2>RUN STEPS</h2>
+      <div id="steps"></div>
+    </aside>
+    <section class="activity panel">
+      <div class="section-head">
+        <div><h2>LIVE ACTIVITY</h2><p id="current-step" class="accent mono">waiting</p></div>
+        <span id="connection" class="connection">CONNECTING</span>
+      </div>
+      <div id="activity-list" class="activity-list"></div>
+    </section>
+    <aside class="metrics panel">
+      <section><h2>RUN METRICS</h2><dl id="run-metrics"></dl></section>
+      <section><h2>TOKEN USAGE</h2><dl id="token-usage"></dl></section>
+      <section><h2>VERIFICATION</h2><dl id="verification"></dl></section>
+    </aside>
+    <section class="console panel">
+      <h2>LATEST OUTPUT</h2>
+      <pre id="latest-output">Waiting for verification evidence</pre>
+    </section>
+  </main>
+  <script src="/dashboard.js" defer></script>
+</body>
+</html>

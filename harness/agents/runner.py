@@ -5,7 +5,8 @@ import os
 import subprocess
 import tempfile
 import threading
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -29,6 +30,12 @@ class AgentRunRequest:
     event_log: Path
     timeout_seconds: int
     max_output_bytes: int
+    model: str
+    reasoning_effort: str
+    subagents_enabled: bool = False
+    max_subagents: int = 1
+    subagent_model: str | None = None
+    subagent_reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,7 @@ class AgentRunResult:
     malformed_event_count: int = 0
     output_truncated: bool = False
     reader_failed: bool = False
+    usage: dict[str, int] = field(default_factory=dict)
 
     @property
     def process_succeeded(self) -> bool:
@@ -85,26 +93,58 @@ def parse_event_stream(raw: str) -> tuple[list[dict[str, object]], str | None]:
 
 
 class CodexRunner:
-    def __init__(self, codex_command: str = "codex"):
+    def __init__(
+        self,
+        codex_command: str = "codex",
+        event_sink: Callable[[dict[str, object]], None] | None = None,
+    ):
         self.codex_command = codex_command
+        self.event_sink = event_sink
 
     def build_command(
         self, request: AgentRunRequest, final_output_path: Path
     ) -> list[str]:
         if request.sandbox not in {"read-only", "workspace-write"}:
             raise ValueError(f"unsupported sandbox: {request.sandbox!r}")
-        return [
+        command = [
             self.codex_command,
             "exec",
-            "--json",
-            "--sandbox",
-            request.sandbox,
-            "--output-schema",
-            str(request.output_schema),
-            "-o",
-            str(final_output_path),
-            request.prompt,
+            "--model",
+            request.model,
+            "-c",
+            f'model_reasoning_effort="{request.reasoning_effort}"',
+            "-c",
+            f"agents.enabled={'true' if request.subagents_enabled else 'false'}",
         ]
+        if request.subagents_enabled:
+            if not request.subagent_model or not request.subagent_reasoning_effort:
+                raise ValueError("enabled subagents require a model and reasoning effort")
+            command.extend(
+                [
+                    "-c",
+                    "agents.max_concurrent_threads_per_session="
+                    + str(request.max_subagents),
+                    "-c",
+                    "agents.default_subagent_model="
+                    + json.dumps(request.subagent_model),
+                    "-c",
+                    "agents.default_subagent_reasoning_effort="
+                    + json.dumps(request.subagent_reasoning_effort),
+                ]
+            )
+        command.extend(
+            [
+                "--json",
+                "--sandbox",
+                request.sandbox,
+                "--output-schema",
+                str(request.output_schema),
+                "-o",
+                str(final_output_path),
+                request.prompt,
+            ]
+        )
+        return command
 
     def run(self, request: AgentRunRequest) -> AgentRunResult:
         request.event_log.parent.mkdir(parents=True, exist_ok=True)
@@ -131,6 +171,7 @@ class CodexRunner:
         malformed_event_count = 0
         output_truncated = False
         reader_failed = False
+        usage: dict[str, int] = {}
         try:
             process = subprocess.Popen(
                 self.build_command(request, final_output_path),
@@ -139,7 +180,7 @@ class CodexRunner:
                 stderr=subprocess.PIPE,
                 start_new_session=(os.name != "nt"),
             )
-            event_result: list[tuple[str | None, int, bool]] = []
+            event_result: list[tuple[str | None, int, bool, dict[str, int]]] = []
             stderr_result: list[str] = []
             reader_errors: list[str] = []
             stdout_thread = threading.Thread(
@@ -150,6 +191,7 @@ class CodexRunner:
                     request.max_output_bytes,
                     event_result,
                     reader_errors,
+                    self.event_sink,
                 ),
                 daemon=True,
             )
@@ -180,7 +222,7 @@ class CodexRunner:
             )
             exit_code = process.returncode if process.returncode is not None else 1
             if event_result:
-                terminal, malformed_event_count, output_truncated = event_result[0]
+                terminal, malformed_event_count, output_truncated, usage = event_result[0]
             os.replace(event_output_path, request.event_log)
             stderr = stderr_result[0] if stderr_result else ""
             if reader_errors:
@@ -206,6 +248,7 @@ class CodexRunner:
             malformed_event_count=malformed_event_count,
             output_truncated=output_truncated,
             reader_failed=reader_failed,
+            usage=usage,
         )
 
     @staticmethod
@@ -230,13 +273,15 @@ def _consume_event_stream(
     source,
     event_log: Path,
     max_bytes: int,
-    result: list[tuple[str | None, int, bool]],
+    result: list[tuple[str | None, int, bool, dict[str, int]]],
     errors: list[str],
+    event_sink: Callable[[dict[str, object]], None] | None = None,
 ) -> None:
     terminal: str | None = None
     malformed_count = 0
     truncated = False
     written = 0
+    usage: dict[str, int] = {}
     try:
         with event_log.open("wb") as event_handle:
             line_number = 0
@@ -273,6 +318,8 @@ def _consume_event_stream(
                 if event.get("type") == "harness.malformed_event":
                     event["line_number"] = line_number
                     malformed_count += 1
+                if event_sink is not None:
+                    _publish_event(event_sink, event)
                 encoded = (
                     json.dumps(
                         event,
@@ -293,6 +340,27 @@ def _consume_event_stream(
                     written += len(encoded)
                 if line_terminal:
                     terminal = line_terminal
-        result.append((terminal, malformed_count, truncated))
+                if event.get("type") == "turn.completed":
+                    raw_usage = event.get("usage")
+                    if isinstance(raw_usage, dict):
+                        for key, value in raw_usage.items():
+                            if (
+                                isinstance(key, str)
+                                and isinstance(value, int)
+                                and not isinstance(value, bool)
+                                and value >= 0
+                            ):
+                                usage[key] = usage.get(key, 0) + value
+        result.append((terminal, malformed_count, truncated, usage))
     except (OSError, ValueError) as error:
         errors.append(f"stdout reader failed: {error}")
+
+
+def _publish_event(
+    event_sink: Callable[[dict[str, object]], None],
+    event: dict[str, object],
+) -> None:
+    try:
+        event_sink(dict(event))
+    except Exception:  # noqa: BLE001 -- telemetry must never fail an agent run
+        return

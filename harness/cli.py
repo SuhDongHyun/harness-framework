@@ -6,26 +6,30 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from .agents import CodexRunner
 from .config import HarnessConfig
-from .controller import HarnessController, HarnessError
-from .git_guard import GitError, GitGuard
-from .models import ValidationError
-from .runner import CodexRunner
-from .store import RunStore
-from .verifier import Verifier
+from .domain import ValidationError
+from .orchestration import HarnessController, HarnessError
+from .safety import GitError, GitGuard, Verifier
+from .storage import RunStore
+from .ui import DashboardServer, ProgressBroker
 
 ControllerFactory = Callable[[Path], HarnessController]
 
 
-def build_controller(root: Path) -> HarnessController:
+def build_controller(
+    root: Path,
+    event_sink: Callable[[dict[str, object]], None] | None = None,
+) -> HarnessController:
     config = HarnessConfig.load(root / ".harness" / "config.toml")
     return HarnessController(
         root=root,
         store=RunStore(root / ".harness" / "runs"),
-        runner=CodexRunner(config.codex_command),
+        runner=CodexRunner(config.codex_command, event_sink=event_sink),
         verifier=Verifier(
             timeout_seconds=config.verification_timeout_seconds,
             max_output_bytes=config.max_output_bytes,
@@ -47,8 +51,15 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("run_id")
     run = commands.add_parser("run", help="execute an approved plan")
     run.add_argument("run_id")
+    run.add_argument("--ui", action="store_true", help="show live localhost UI")
+    run.add_argument("--ui-port", type=int, default=0)
+    review = commands.add_parser("review", help="review a run without changing state")
+    review.add_argument("run_id")
     status = commands.add_parser("status", help="read run state")
     status.add_argument("run_id")
+    ui = commands.add_parser("ui", help="show a read-only run dashboard")
+    ui.add_argument("run_id")
+    ui.add_argument("--port", type=int, default=0)
     commands.add_parser("doctor", help="diagnose local harness prerequisites")
     return parser
 
@@ -66,7 +77,32 @@ def main(
         _print_json(report)
         return 0 if report["ok"] else 2
     try:
-        controller = controller_factory(project_root)
+        if args.command == "ui":
+            config = HarnessConfig.load(project_root / ".harness" / "config.toml")
+            server = DashboardServer(
+                root=project_root,
+                run_id=args.run_id,
+                config=config,
+                port=args.port,
+            ).start()
+            _print_json({"run_id": args.run_id, "ui": server.url})
+            _wait_for_dashboard(server)
+            return 0
+        server: DashboardServer | None = None
+        if args.command == "run" and args.ui and controller_factory is build_controller:
+            config = HarnessConfig.load(project_root / ".harness" / "config.toml")
+            broker = ProgressBroker()
+            controller = build_controller(project_root, event_sink=broker.publish)
+            server = DashboardServer(
+                root=project_root,
+                run_id=args.run_id,
+                config=config,
+                broker=broker,
+                port=args.ui_port,
+            ).start()
+            print(f"harness UI: {server.url}", file=sys.stderr)
+        else:
+            controller = controller_factory(project_root)
         if args.command == "plan":
             run_id = controller.plan(" ".join(args.goal))
             _print_json({"run_id": run_id, "status": "draft"})
@@ -78,13 +114,21 @@ def main(
         if args.command == "status":
             _print_json(controller.status(args.run_id).to_dict())
             return 0
+        if args.command == "review":
+            result = controller.review(args.run_id)
+            _print_json({"run_id": args.run_id, "review": result.to_dict()})
+            return 0
         state = controller.run(args.run_id)
         _print_json(state.to_dict())
+        exit_code = 1
         if state.status == "completed":
-            return 0
-        if state.status == "blocked":
-            return 2
-        return 1
+            exit_code = 0
+        elif state.status == "blocked":
+            exit_code = 2
+        if server is not None:
+            print("harness UI remains available; press Ctrl-C to stop", file=sys.stderr)
+            _wait_for_dashboard(server)
+        return exit_code
     except (HarnessError, ValidationError, GitError, OSError) as error:
         print(f"harness: {error}", file=sys.stderr)
         return 2
@@ -125,7 +169,18 @@ def run_doctor(root: Path) -> dict[str, object]:
     try:
         config = HarnessConfig.load(config_path)
         config_ok = True
-        config_detail = f"valid; command={config.codex_command}"
+        config_detail = (
+            f"valid; command={config.codex_command}; "
+            f"planner={config.planner.model}/{config.planner.reasoning_effort}; "
+            f"executor={config.executor.model}/{config.executor.reasoning_effort}; "
+            f"reviewer={config.reviewer.model}/{config.reviewer.reasoning_effort}"
+            f"; parallel_readers={config.parallel_readers.enabled}/"
+            f"{config.parallel_readers.max_workers}/"
+            f"{config.parallel_readers.profile.model}/"
+            f"{config.parallel_readers.profile.reasoning_effort}; "
+            f"parallel_writers={config.parallel_writers.enabled}/"
+            f"{config.parallel_writers.max_workers}"
+        )
     except ValidationError as error:
         config = None
         config_ok = False
@@ -144,6 +199,7 @@ def run_doctor(root: Path) -> dict[str, object]:
     schema_paths = [
         root / "schemas" / "plan.schema.json",
         root / "schemas" / "step-result.schema.json",
+        root / "schemas" / "review-result.schema.json",
         root / "schemas" / "state.schema.json",
     ]
     schema_errors: list[str] = []
@@ -158,7 +214,7 @@ def run_doctor(root: Path) -> dict[str, object]:
         _check(
             "Schemas",
             not schema_errors,
-            "3 valid schemas" if not schema_errors else "; ".join(schema_errors),
+            "4 valid schemas" if not schema_errors else "; ".join(schema_errors),
         )
     )
 
@@ -180,3 +236,14 @@ def _check(name: str, ok: bool, detail: str) -> dict[str, object]:
 
 def _print_json(value: object) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False))
+
+
+def _wait_for_dashboard(server: DashboardServer) -> None:
+    try:
+        threading_event = threading.Event()
+        while True:
+            threading_event.wait(60)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.stop()

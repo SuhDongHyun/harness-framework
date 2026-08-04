@@ -2,15 +2,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from harness.config import HarnessConfig
-from harness.controller import HarnessController, HarnessError, _default_run_id
-from harness.git_guard import GitSnapshot
-from harness.runner import AgentRunResult
-from harness.store import RunStore
-from harness.verifier import (
+from harness.agents import AgentRunResult
+from harness.config import AgentProfile, HarnessConfig
+from harness.orchestration import HarnessController, HarnessError
+from harness.orchestration.planning import default_run_id
+from harness.safety import GitSnapshot
+from harness.safety.verifier import (
     CommandEvidence,
     VerificationResult,
 )
+from harness.storage import RunStore
 from tests.test_models_store import valid_plan
 
 
@@ -72,6 +73,31 @@ def plan_result() -> AgentRunResult:
         stderr="",
         timed_out=False,
         terminal_event="turn.completed",
+    )
+
+
+def review_result(status: str = "draft") -> AgentRunResult:
+    return AgentRunResult(
+        exit_code=0,
+        final_payload={
+            "version": 1,
+            "observed_status": status,
+            "summary": "Evidence reviewed",
+            "findings": [],
+        },
+        stderr="",
+        timed_out=False,
+        terminal_event="turn.completed",
+    )
+
+
+def failed_agent_run() -> AgentRunResult:
+    return AgentRunResult(
+        exit_code=1,
+        final_payload=None,
+        stderr="review failed",
+        timed_out=False,
+        terminal_event="turn.failed",
     )
 
 
@@ -156,6 +182,7 @@ class ControllerTests(unittest.TestCase):
         (self.root / "schemas").mkdir()
         (self.root / "schemas" / "plan.schema.json").write_text("{}")
         (self.root / "schemas" / "step-result.schema.json").write_text("{}")
+        (self.root / "schemas" / "review-result.schema.json").write_text("{}")
         self.store = RunStore(self.root / ".harness" / "runs")
         self.git = FakeGitGuard()
         self.config = HarnessConfig(
@@ -164,6 +191,9 @@ class ControllerTests(unittest.TestCase):
             verification_timeout_seconds=30,
             max_output_bytes=10_000,
             codex_command="codex",
+            planner=AgentProfile("planner-model", "high"),
+            executor=AgentProfile("executor-model", "xhigh"),
+            reviewer=AgentProfile("reviewer-model", "high"),
         )
 
     def controller(self, runner_results, verifier_results=()):
@@ -185,6 +215,14 @@ class ControllerTests(unittest.TestCase):
         run_id = controller.plan("Build a small feature")
         self.assertEqual("run-1", run_id)
         self.assertEqual("read-only", runner.requests[0].sandbox)
+        self.assertEqual("planner-model", runner.requests[0].model)
+        self.assertEqual("high", runner.requests[0].reasoning_effort)
+        self.assertTrue(runner.requests[0].subagents_enabled)
+        self.assertEqual(3, runner.requests[0].max_subagents)
+        self.assertIn(
+            'must exactly equal this JSON string, without paraphrasing: "Build a small feature"',
+            runner.requests[0].prompt,
+        )
         self.assertEqual("draft", controller.status(run_id).status)
         self.assertTrue((self.store.run_dir(run_id) / "steps" / "00-core.md").is_file())
 
@@ -196,6 +234,39 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual("approved", state.status)
         self.assertIsNotNone(state.plan_sha256)
         self.assertEqual("git-base", state.approved_git_fingerprint)
+
+    def test_review_uses_reviewer_profile_without_changing_state(self):
+        controller, runner, _ = self.controller([plan_result(), review_result()])
+        run_id = controller.plan("Build a small feature")
+        before = controller.status(run_id).to_dict()
+        result = controller.review(run_id)
+        self.assertEqual("Evidence reviewed", result.summary)
+        self.assertEqual("read-only", runner.requests[1].sandbox)
+        self.assertEqual("reviewer-model", runner.requests[1].model)
+        self.assertEqual("high", runner.requests[1].reasoning_effort)
+        self.assertTrue(runner.requests[1].subagents_enabled)
+        self.assertIn("never print a complete Git diff", runner.requests[1].prompt)
+        self.assertEqual(before, controller.status(run_id).to_dict())
+        self.assertTrue(
+            self.store.evidence_path(run_id, "review-01.json").is_file()
+        )
+
+    def test_failed_review_is_preserved_before_next_review(self):
+        controller, _, _ = self.controller(
+            [plan_result(), failed_agent_run(), review_result()]
+        )
+        run_id = controller.plan("Build a small feature")
+        with self.assertRaisesRegex(HarnessError, "completed review"):
+            controller.review(run_id)
+        self.assertTrue(
+            self.store.evidence_path(
+                run_id, "review-01-failure.json"
+            ).is_file()
+        )
+        controller.review(run_id)
+        self.assertTrue(
+            self.store.evidence_path(run_id, "review-02.json").is_file()
+        )
 
     def test_approve_rebuilds_state_after_user_edits_draft_plan(self):
         controller, _, _ = self.controller([plan_result()])
@@ -229,7 +300,7 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("Git working tree", state.blocked_reason)
 
     def test_successful_step_and_final_verification_complete_run(self):
-        controller, _, verifier = self.controller(
+        controller, runner, verifier = self.controller(
             [plan_result(), completed_result()],
             [verification(True), verification(True)],
         )
@@ -238,6 +309,8 @@ class ControllerTests(unittest.TestCase):
         state = controller.run(run_id)
         self.assertEqual("completed", state.status)
         self.assertEqual("completed", state.steps[0]["status"])
+        self.assertEqual("executor-model", runner.requests[1].model)
+        self.assertEqual("xhigh", runner.requests[1].reasoning_effort)
         self.assertEqual(2, len(verifier.calls))
 
     def test_verifier_failure_retries_then_succeeds(self):
@@ -428,7 +501,7 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("run.verifying", event_types)
 
     def test_default_run_ids_do_not_collide(self):
-        self.assertNotEqual(_default_run_id("same goal"), _default_run_id("same goal"))
+        self.assertNotEqual(default_run_id("same goal"), default_run_id("same goal"))
 
 
 if __name__ == "__main__":

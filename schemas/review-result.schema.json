@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harness Review Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "observed_status",
+    "summary",
+    "findings"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "observed_status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "approved",
+        "running",
+        "verifying",
+        "completed",
+        "failed",
+        "blocked"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "severity",
+          "title",
+          "path",
+          "evidence",
+          "recommendation"
+        ],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["info", "warning", "error", "critical"]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": ["string", "null"]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

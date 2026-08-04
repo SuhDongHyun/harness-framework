@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from .process import (
+from ..agents.process import (
     bounded_text,
     consume_bounded_stream,
     finish_readers,
