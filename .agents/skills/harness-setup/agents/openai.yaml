@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harness Setup"
+  short_description: "Prepare the Harness Codex runtime automatically"
+  default_prompt: "Use $harness-setup to prepare and verify this repository for Harness runs."

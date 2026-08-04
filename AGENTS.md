@@ -22,29 +22,33 @@ evidence.
 
 ## Current workflow
 
-1. `$harness-plan` checks prerequisites, runs Codex read-only, stores one draft
+1. On Linux or WSL, `$harness-setup` prepares a private, dedicated Harness Codex
+   home, completes its login flow, merges the per-user outer Codex writable-root
+   entry, and verifies the result. A Codex restart is required after a new root.
+2. `$harness-plan` checks prerequisites, runs Codex read-only, stores one draft
    run for one user goal, and opens its read-only localhost dashboard.
-2. The user reviews or edits the draft, then explicitly invokes
+3. The user reviews or edits the draft, then explicitly invokes
    `$harness-approve <run-id>`.
-3. The approval skill records the plan hash and current Git working-tree
+4. The approval skill records the plan hash and current Git working-tree
    fingerprint, executes the run, and performs one independent review after a
    terminal result.
-4. `run` rejects a changed approval baseline and retries failed execution or
+5. `run` rejects a changed approval baseline and retries failed execution or
    verification up to the configured limit. It runs sequentially by default;
    opt-in parallel writers execute dependency-ready, path-disjoint steps in
    isolated repository copies before controller integration.
-5. The controller independently runs per-step and final acceptance commands. A
+6. The controller independently runs per-step and final acceptance commands. A
    command failure, out-of-scope edit, Git index/HEAD change, or run-metadata
    tampering prevents completion.
-6. `status` reads the controller-owned run state and evidence remains under
+7. `status` reads the controller-owned run state and evidence remains under
    `.harness/runs/<run-id>/`.
-7. `review` runs read-only with its own model profile and stores an advisory
+8. `review` runs read-only with its own model profile and stores an advisory
    report without changing controller-owned terminal state.
-8. `run --ui` and `ui` expose a localhost-only, read-only progress dashboard.
+9. `run --ui` and `ui` expose a localhost-only, read-only progress dashboard.
 
 ## User workflow
 
 ```text
+$harness-setup
 $harness-plan "<goal>"
 $harness-approve <run-id>
 ```
@@ -52,6 +56,7 @@ $harness-approve <run-id>
 ## Internal CLI
 
 ```bash
+python3 scripts/harness.py setup
 python3 scripts/harness.py doctor
 python3 scripts/harness.py plan "<goal>"
 python3 scripts/harness.py approve <run-id>
@@ -63,6 +68,8 @@ python3 scripts/harness.py ui <run-id>
 
 ## Workflow routing
 
+- Use `$harness-setup` for first installation or failed runtime-home/login
+  diagnostics. It performs setup without creating or changing a run.
 - Use `$harness-plan` to create and inspect one draft run and automatically open
   its dashboard without editing project code.
 - Use `$harness-approve` only when the user explicitly approves an exact run ID;

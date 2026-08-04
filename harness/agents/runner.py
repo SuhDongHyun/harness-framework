@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -19,6 +20,127 @@ from .process import (
 )
 
 TERMINAL_EVENT_TYPES = frozenset({"turn.completed", "turn.failed", "error"})
+HARNESS_CODEX_HOME_ENV = "HARNESS_CODEX_HOME"
+
+
+def resolve_harness_codex_home(
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    environment = os.environ if environ is None else environ
+    override = environment.get(HARNESS_CODEX_HOME_ENV)
+    if override:
+        path = Path(override).expanduser()
+    else:
+        state_root = environment.get("XDG_STATE_HOME")
+        base = (
+            Path(state_root).expanduser()
+            if state_root
+            else Path.home() / ".local" / "state"
+        )
+        path = base / "personal-codex-harness" / "codex-home"
+    if not path.is_absolute():
+        raise ValueError(f"{HARNESS_CODEX_HOME_ENV} must be an absolute path")
+    return path.absolute()
+
+
+def prepare_harness_codex_home(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise OSError(f"Codex runtime home is not a regular directory: {path}")
+    if path.stat().st_uid != os.getuid():
+        raise PermissionError(f"Codex runtime home must be owned by this user: {path}")
+    path.chmod(0o700)
+
+
+def harness_codex_home_status(path: Path) -> tuple[bool, str]:
+    if not path.is_dir() or path.is_symlink():
+        return False, f"{path} does not exist as a regular directory"
+    if path.stat().st_uid != os.getuid():
+        return False, f"{path} must be owned by this user"
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+        return False, f"{path} must have mode 0700"
+    if not os.access(path, os.W_OK):
+        return False, f"{path} is not writable in the active sandbox"
+    auth_path = path / "auth.json"
+    if not auth_path.is_file() or auth_path.is_symlink():
+        return False, f"{auth_path} is missing; log in with this CODEX_HOME"
+    auth_mode = stat.S_IMODE(auth_path.stat().st_mode)
+    if auth_mode & 0o077:
+        return False, f"{auth_path} must not be accessible by group or other users"
+    if not os.access(auth_path, os.R_OK | os.W_OK):
+        return False, f"{auth_path} must be readable and writable by this user"
+    return True, str(path)
+
+
+def codex_login_status(
+    codex_command: str,
+    codex_home: Path,
+    timeout_seconds: int = 10,
+) -> tuple[bool, str]:
+    environment = os.environ.copy()
+    environment["CODEX_HOME"] = str(codex_home)
+    try:
+        result = subprocess.run(
+            [codex_command, "login", "status"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, str(error)
+    detail = result.stdout.strip() or result.stderr.strip()
+    return result.returncode == 0, detail or f"exit code {result.returncode}"
+
+
+class CodexSandbox:
+    def __init__(self, codex_command: str, codex_home: Path):
+        self.codex_command = codex_command
+        self.codex_home = codex_home
+
+    def build_command(self, argv: Sequence[str], cwd: Path) -> list[str]:
+        return [
+            self.codex_command,
+            "sandbox",
+            "--permission-profile",
+            ":workspace",
+            "--cd",
+            str(cwd),
+            "-c",
+            "sandbox_workspace_write.writable_roots=[]",
+            "-c",
+            "sandbox_workspace_write.network_access=false",
+            "--",
+            "/usr/bin/env",
+            "-u",
+            "CODEX_HOME",
+            "-u",
+            "HARNESS_CODEX_HOME",
+            "-u",
+            "OPENAI_API_KEY",
+            "-u",
+            "CODEX_API_KEY",
+            *argv,
+        ]
+
+    def popen(
+        self,
+        argv: Sequence[str],
+        cwd: Path,
+    ) -> subprocess.Popen[bytes]:
+        environment = os.environ.copy()
+        environment["CODEX_HOME"] = str(self.codex_home)
+        return subprocess.Popen(
+            self.build_command(argv, cwd),
+            cwd=cwd,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -97,9 +219,11 @@ class CodexRunner:
         self,
         codex_command: str = "codex",
         event_sink: Callable[[dict[str, object]], None] | None = None,
+        codex_home: Path | None = None,
     ):
         self.codex_command = codex_command
         self.event_sink = event_sink
+        self.codex_home = codex_home
 
     def build_command(
         self, request: AgentRunRequest, final_output_path: Path
@@ -109,8 +233,20 @@ class CodexRunner:
         command = [
             self.codex_command,
             "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
             "--model",
             request.model,
+            "-c",
+            'approval_policy="never"',
+            "-c",
+            "sandbox_workspace_write.writable_roots=[]",
+            "-c",
+            "sandbox_workspace_write.network_access=false",
+            "-c",
+            'shell_environment_policy.exclude=["CODEX_HOME",'
+            '"HARNESS_CODEX_HOME","OPENAI_API_KEY","CODEX_API_KEY"]',
             "-c",
             f'model_reasoning_effort="{request.reasoning_effort}"',
             "-c",
@@ -176,6 +312,7 @@ class CodexRunner:
             process = subprocess.Popen(
                 self.build_command(request, final_output_path),
                 cwd=request.cwd,
+                env=self._environment(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=(os.name != "nt"),
@@ -250,6 +387,12 @@ class CodexRunner:
             reader_failed=reader_failed,
             usage=usage,
         )
+
+    def _environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        if self.codex_home is not None:
+            environment["CODEX_HOME"] = str(self.codex_home)
+        return environment
 
     @staticmethod
     def _read_final_payload(

@@ -9,12 +9,64 @@ from pathlib import Path
 from harness.agents.runner import (
     AgentRunRequest,
     CodexRunner,
+    CodexSandbox,
+    codex_login_status,
+    harness_codex_home_status,
     parse_event_stream,
+    prepare_harness_codex_home,
+    resolve_harness_codex_home,
 )
 from harness.safety import GitGuard, Verifier, paths_outside_allowed
 
 
 class RunnerTests(unittest.TestCase):
+    def test_resolve_harness_codex_home_uses_linux_state_convention(self):
+        self.assertEqual(
+            Path("/state/personal-codex-harness/codex-home"),
+            resolve_harness_codex_home({"XDG_STATE_HOME": "/state"}),
+        )
+        self.assertEqual(
+            Path("/custom/codex-home"),
+            resolve_harness_codex_home(
+                {
+                    "XDG_STATE_HOME": "/state",
+                    "HARNESS_CODEX_HOME": "/custom/codex-home",
+                }
+            ),
+        )
+
+    def test_prepare_and_check_private_harness_codex_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            codex_home = Path(tmp) / "state" / "codex-home"
+            prepare_harness_codex_home(codex_home)
+            codex_home.chmod(0o755)
+            prepare_harness_codex_home(codex_home)
+            auth = codex_home / "auth.json"
+            auth.write_text("{}", encoding="utf-8")
+            auth.chmod(0o600)
+            self.assertEqual(0o700, codex_home.stat().st_mode & 0o777)
+            self.assertEqual(
+                (True, str(codex_home)),
+                harness_codex_home_status(codex_home),
+            )
+
+    def test_codex_login_status_uses_dedicated_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, sys\n"
+                "assert sys.argv[1:] == ['login', 'status']\n"
+                "print(os.environ['CODEX_HOME'])\n"
+            )
+            executable.chmod(0o755)
+            codex_home = root / "runtime-home"
+            self.assertEqual(
+                (True, str(codex_home)),
+                codex_login_status(str(executable), codex_home),
+            )
+
     def test_build_command_uses_explicit_sandbox_and_schema(self):
         request = AgentRunRequest(
             prompt="Do the step",
@@ -32,8 +84,20 @@ class RunnerTests(unittest.TestCase):
             [
                 "codex",
                 "exec",
+                "--ephemeral",
+                "--ignore-user-config",
+                "--ignore-rules",
                 "--model",
                 "planner-model",
+                "-c",
+                'approval_policy="never"',
+                "-c",
+                "sandbox_workspace_write.writable_roots=[]",
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+                "-c",
+                'shell_environment_policy.exclude=["CODEX_HOME",'
+                '"HARNESS_CODEX_HOME","OPENAI_API_KEY","CODEX_API_KEY"]',
                 "-c",
                 'model_reasoning_effort="high"',
                 "-c",
@@ -126,6 +190,37 @@ class RunnerTests(unittest.TestCase):
             )
             result = CodexRunner(str(executable)).run(request)
             self.assertEqual({"input_tokens": 10, "output_tokens": 4}, result.usage)
+
+    def test_run_sets_dedicated_codex_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, pathlib, sys\n"
+                "output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
+                "output.write_text(json.dumps({'home': os.environ['CODEX_HOME']}))\n"
+                "print(json.dumps({'type': 'turn.completed'}))\n"
+            )
+            executable.chmod(0o755)
+            schema = root / "schema.json"
+            schema.write_text("{}")
+            codex_home = root / "runtime-home"
+            request = AgentRunRequest(
+                prompt="Do the step",
+                sandbox="read-only",
+                output_schema=schema,
+                cwd=root,
+                event_log=root / "events.jsonl",
+                timeout_seconds=5,
+                max_output_bytes=10_000,
+                model="planner-model",
+                reasoning_effort="high",
+            )
+            result = CodexRunner(
+                str(executable), codex_home=codex_home
+            ).run(request)
+            self.assertEqual(str(codex_home), result.final_payload["home"])
 
     @unittest.skipIf(sys.platform == "win32", "executable fixture uses a POSIX shebang")
     def test_run_captures_events_and_structured_final_output(self):
@@ -261,6 +356,48 @@ class RunnerTests(unittest.TestCase):
 
 
 class VerifierTests(unittest.TestCase):
+    def test_build_command_uses_nested_workspace_sandbox(self):
+        sandbox = CodexSandbox(
+            codex_command="codex",
+            codex_home=Path("/state/codex-home"),
+        )
+        verifier = Verifier(
+            timeout_seconds=5,
+            max_output_bytes=10_000,
+            sandbox=sandbox,
+        )
+        self.assertEqual(
+            [
+                "codex",
+                "sandbox",
+                "--permission-profile",
+                ":workspace",
+                "--cd",
+                "/repo",
+                "-c",
+                "sandbox_workspace_write.writable_roots=[]",
+                "-c",
+                "sandbox_workspace_write.network_access=false",
+                "--",
+                "/usr/bin/env",
+                "-u",
+                "CODEX_HOME",
+                "-u",
+                "HARNESS_CODEX_HOME",
+                "-u",
+                "OPENAI_API_KEY",
+                "-u",
+                "CODEX_API_KEY",
+                "python3",
+                "-m",
+                "unittest",
+            ],
+            sandbox.build_command(
+                ["python3", "-m", "unittest"], Path("/repo")
+            ),
+        )
+        self.assertIs(sandbox, verifier.sandbox)
+
     def test_success(self):
         verifier = Verifier(timeout_seconds=5, max_output_bytes=10_000)
         result = verifier.verify(
