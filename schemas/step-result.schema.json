@@ -13,6 +13,7 @@
   ],
   "properties": {
     "outcome": {
+      "type": "string",
       "enum": [
         "completed",
         "failed",

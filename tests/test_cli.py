@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from harness.cli import main, run_doctor
-from harness.controller import HarnessError
-from harness.models import Plan, RunState
+from harness.domain import Plan, RunState
+from harness.orchestration import HarnessError
 from tests.test_models_store import valid_plan
 
 
@@ -32,6 +32,19 @@ class FakeController:
     def status(self, run_id):
         self.calls.append(("status", run_id))
         return self.state
+
+    def review(self, run_id):
+        self.calls.append(("review", run_id))
+        return type(
+            "Review",
+            (),
+            {"to_dict": lambda self: {
+                "version": 1,
+                "observed_status": "draft",
+                "summary": "reviewed",
+                "findings": [],
+            }},
+        )()
 
 
 class CliTests(unittest.TestCase):
@@ -78,6 +91,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual([("status", "run-1")], controller.calls)
         self.assertEqual("draft", json.loads(stdout)["status"])
 
+    def test_review_routes_run_id(self):
+        code, stdout, _, controller = self.invoke(["review", "run-1"])
+        self.assertEqual(0, code)
+        self.assertEqual([("review", "run-1")], controller.calls)
+        self.assertEqual("reviewed", json.loads(stdout)["review"]["summary"])
+
     def test_harness_error_returns_two(self):
         controller = FakeController()
         controller.plan = lambda goal: (_ for _ in ()).throw(HarnessError("bad goal"))
@@ -103,6 +122,7 @@ class CliTests(unittest.TestCase):
             for name in (
                 "plan.schema.json",
                 "step-result.schema.json",
+                "review-result.schema.json",
                 "state.schema.json",
             ):
                 (root / "schemas" / name).write_text("{}")
@@ -131,6 +151,7 @@ class CliTests(unittest.TestCase):
             for name in (
                 "plan.schema.json",
                 "step-result.schema.json",
+                "review-result.schema.json",
                 "state.schema.json",
             ):
                 (root / "schemas" / name).write_text("{}")

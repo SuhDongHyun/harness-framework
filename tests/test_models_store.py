@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from harness.models import Plan, RunState, ValidationError
-from harness.store import RunStore
+from harness.domain import Plan, RunState, ValidationError
+from harness.storage import RunStore
 
 
 def valid_plan() -> dict:
@@ -16,6 +16,7 @@ def valid_plan() -> dict:
             {
                 "id": "step-00",
                 "name": "core",
+                "depends_on": [],
                 "objective": "Implement the core behavior",
                 "read_files": ["AGENTS.md"],
                 "allowed_paths": ["src/**", "tests/**"],
@@ -83,6 +84,22 @@ class PlanModelTests(unittest.TestCase):
         payload["steps"].append(dict(payload["steps"][0]))
         with self.assertRaises(ValidationError):
             Plan.from_dict(payload)
+
+    def test_dependencies_must_reference_earlier_steps(self):
+        payload = valid_plan()
+        payload["steps"][0]["depends_on"] = ["step-01"]
+        with self.assertRaisesRegex(ValidationError, "earlier steps"):
+            Plan.from_dict(payload)
+
+    def test_accepts_dependency_on_earlier_step(self):
+        payload = valid_plan()
+        second = dict(payload["steps"][0])
+        second["id"] = "step-01"
+        second["name"] = "follow-up"
+        second["depends_on"] = ["step-00"]
+        payload["steps"].append(second)
+        plan = Plan.from_dict(payload)
+        self.assertEqual(("step-00",), plan.steps[1].depends_on)
 
     def test_plan_hash_is_stable(self):
         first = Plan.from_dict(valid_plan())

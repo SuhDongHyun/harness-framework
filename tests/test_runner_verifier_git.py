@@ -6,13 +6,12 @@ import time
 import unittest
 from pathlib import Path
 
-from harness.git_guard import GitGuard, paths_outside_allowed
-from harness.runner import (
+from harness.agents.runner import (
     AgentRunRequest,
     CodexRunner,
     parse_event_stream,
 )
-from harness.verifier import Verifier
+from harness.safety import GitGuard, Verifier, paths_outside_allowed
 
 
 class RunnerTests(unittest.TestCase):
@@ -25,12 +24,20 @@ class RunnerTests(unittest.TestCase):
             event_log=Path("/repo/events.jsonl"),
             timeout_seconds=30,
             max_output_bytes=10_000,
+            model="planner-model",
+            reasoning_effort="high",
         )
         command = CodexRunner("codex").build_command(request, Path("/repo/final.json"))
         self.assertEqual(
             [
                 "codex",
                 "exec",
+                "--model",
+                "planner-model",
+                "-c",
+                'model_reasoning_effort="high"',
+                "-c",
+                "agents.enabled=false",
                 "--json",
                 "--sandbox",
                 "read-only",
@@ -41,6 +48,32 @@ class RunnerTests(unittest.TestCase):
                 "Do the step",
             ],
             command,
+        )
+
+    def test_build_command_configures_bounded_read_only_subagents(self):
+        request = AgentRunRequest(
+            prompt="Review",
+            sandbox="read-only",
+            output_schema=Path("/repo/schema.json"),
+            cwd=Path("/repo"),
+            event_log=Path("/repo/events.jsonl"),
+            timeout_seconds=30,
+            max_output_bytes=10_000,
+            model="reviewer-model",
+            reasoning_effort="high",
+            subagents_enabled=True,
+            max_subagents=3,
+            subagent_model="reader-model",
+            subagent_reasoning_effort="medium",
+        )
+        command = CodexRunner("codex").build_command(
+            request, Path("/repo/final.json")
+        )
+        self.assertIn("agents.enabled=true", command)
+        self.assertIn("agents.max_concurrent_threads_per_session=3", command)
+        self.assertIn('agents.default_subagent_model="reader-model"', command)
+        self.assertIn(
+            'agents.default_subagent_reasoning_effort="medium"', command
         )
 
     def test_parse_event_stream_finds_terminal_event_and_malformed_line(self):
@@ -64,6 +97,35 @@ class RunnerTests(unittest.TestCase):
         )
         _, terminal = parse_event_stream(raw)
         self.assertEqual("error", terminal)
+
+    def test_run_collects_terminal_usage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, pathlib, sys\n"
+                "output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
+                "output.write_text(json.dumps({'value': 'ok'}))\n"
+                "print(json.dumps({'type': 'turn.completed', 'usage': "
+                "{'input_tokens': 10, 'output_tokens': 4}}))\n"
+            )
+            executable.chmod(0o755)
+            schema = root / "schema.json"
+            schema.write_text("{}")
+            request = AgentRunRequest(
+                prompt="Do the step",
+                sandbox="read-only",
+                output_schema=schema,
+                cwd=root,
+                event_log=root / "events.jsonl",
+                timeout_seconds=5,
+                max_output_bytes=10_000,
+                model="planner-model",
+                reasoning_effort="high",
+            )
+            result = CodexRunner(str(executable)).run(request)
+            self.assertEqual({"input_tokens": 10, "output_tokens": 4}, result.usage)
 
     @unittest.skipIf(sys.platform == "win32", "executable fixture uses a POSIX shebang")
     def test_run_captures_events_and_structured_final_output(self):
@@ -89,6 +151,8 @@ class RunnerTests(unittest.TestCase):
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
                 max_output_bytes=10_000,
+                model="executor-model",
+                reasoning_effort="xhigh",
             )
             result = CodexRunner(str(executable)).run(request)
             self.assertTrue(result.process_succeeded)
@@ -123,6 +187,8 @@ class RunnerTests(unittest.TestCase):
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
                 max_output_bytes=10_000,
+                model="executor-model",
+                reasoning_effort="xhigh",
             )
             result = CodexRunner(str(executable)).run(request)
             self.assertFalse(result.process_succeeded)
@@ -152,6 +218,8 @@ class RunnerTests(unittest.TestCase):
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
                 max_output_bytes=256,
+                model="executor-model",
+                reasoning_effort="xhigh",
             )
             result = CodexRunner(str(executable)).run(request)
             self.assertFalse(result.process_succeeded)
@@ -182,6 +250,8 @@ class RunnerTests(unittest.TestCase):
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
                 max_output_bytes=10_000,
+                model="executor-model",
+                reasoning_effort="xhigh",
             )
             started = time.monotonic()
             result = CodexRunner(str(executable)).run(request)
