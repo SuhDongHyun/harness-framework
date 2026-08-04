@@ -1,5 +1,8 @@
 # Harness Design
 
+This repository-level document defines the authority and package boundaries of
+the Personal Codex Harness.
+
 ## Authority boundaries
 
 - `HarnessController` is the only owner of run and step state.
@@ -36,6 +39,20 @@ parallel writers are explicitly enabled.
 Plans use sequential IDs and may declare `depends_on` with earlier step IDs.
 This restriction makes the dependency graph acyclic without requiring a
 separate cycle-breaking algorithm. Sequential mode follows plan order.
+
+## Run identity and skill workflow
+
+One user goal owns one run ID. Its draft and approved plan, step attempts,
+verification evidence, terminal state, and one or more advisory reviews remain
+under that run. A materially different goal or a changed post-approval Git
+baseline requires a new run instead of reusing the old identity.
+
+`$harness-plan` is the normal user entry point. It checks prerequisites, creates
+one draft run, and starts that run's read-only dashboard without approving or
+editing project files. Only an explicit `$harness-approve <run-id>` invocation
+authorizes the workflow layer to call `approve`, `run`, and then `review` for
+that exact run. These commands remain separate controller operations; the skill
+only sequences them and cannot replace controller-owned evidence or state.
 
 ## Review
 
@@ -79,3 +96,8 @@ The UI uses live events only for presentation. Refreshing the page reconstructs
 authoritative status and historical activity from run artifacts. The server
 rejects POST requests, uses a restrictive Content Security Policy, and never
 binds beyond `127.0.0.1`.
+
+The standalone `ui <run-id> --open-browser` command may ask the operating system
+to open the dashboard. Browser-launch failure is non-fatal because the emitted
+loopback URL remains usable. Skill-started dashboards run independently from
+execution so automatic review can follow a terminal run while the UI stays up.

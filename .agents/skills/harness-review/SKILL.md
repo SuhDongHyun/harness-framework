@@ -5,7 +5,7 @@ description: Review Personal Codex Harness runs and repository changes without e
 
 # Harness Review
 
-1. Read `AGENTS.md`, `docs/HARNESS_DESIGN.md`, the run's `plan.json`, `state.json`, and relevant evidence files.
+1. Read `AGENTS.md`, `HARNESS_DESIGN.md`, the run's `plan.json`, `state.json`, and relevant evidence files.
 2. Compare actual Git changes with every step's `allowed_paths`.
 3. Confirm the controller, not model output, owns terminal state.
 4. Check each completed step has passing independent verification evidence.

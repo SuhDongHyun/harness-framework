@@ -6,7 +6,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from harness.cli import main, run_doctor
+from harness.cli import _open_browser, build_parser, main, run_doctor
 from harness.domain import Plan, RunState
 from harness.orchestration import HarnessError
 from tests.test_models_store import valid_plan
@@ -96,6 +96,43 @@ class CliTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual([("review", "run-1")], controller.calls)
         self.assertEqual("reviewed", json.loads(stdout)["review"]["summary"])
+
+    def test_ui_accepts_open_browser(self):
+        args = build_parser().parse_args(
+            ["ui", "run-1", "--port", "8123", "--open-browser"]
+        )
+        self.assertEqual("run-1", args.run_id)
+        self.assertEqual(8123, args.port)
+        self.assertTrue(args.open_browser)
+
+    def test_ui_opens_browser_before_waiting(self):
+        server = type("Server", (), {"url": "http://127.0.0.1:8123/"})()
+        stdout = io.StringIO()
+        with (
+            patch("harness.cli.HarnessConfig.load", return_value=object()),
+            patch("harness.cli.DashboardServer") as dashboard,
+            patch("harness.cli._open_browser") as open_browser,
+            patch("harness.cli._wait_for_dashboard") as wait_for_dashboard,
+            redirect_stdout(stdout),
+        ):
+            dashboard.return_value.start.return_value = server
+            code = main(
+                ["ui", "run-1", "--open-browser"],
+                root=Path("/repo"),
+            )
+        self.assertEqual(0, code)
+        self.assertEqual(server.url, json.loads(stdout.getvalue())["ui"])
+        open_browser.assert_called_once_with(server.url)
+        wait_for_dashboard.assert_called_once_with(server)
+
+    def test_ui_browser_launch_failure_is_nonfatal(self):
+        stderr = io.StringIO()
+        with (
+            patch("harness.cli.webbrowser.open", return_value=False),
+            redirect_stderr(stderr),
+        ):
+            _open_browser("http://127.0.0.1:8123/")
+        self.assertIn("open http://127.0.0.1:8123/", stderr.getvalue())
 
     def test_harness_error_returns_two(self):
         controller = FakeController()
