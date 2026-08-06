@@ -41,8 +41,8 @@ def agent_failure(result: AgentRunResult) -> str:
         return "Codex execution timed out"
     if result.reader_failed:
         return result.stderr or "Codex output reader failed"
-    if result.output_truncated:
-        return "Codex output exceeded the configured evidence limit"
+    if result.final_payload_truncated:
+        return "Codex final payload exceeded the configured payload limit"
     if result.malformed_event_count:
         return f"Codex emitted malformed JSONL events: {result.malformed_event_count}"
     if result.stderr:

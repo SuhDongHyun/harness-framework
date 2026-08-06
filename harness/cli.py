@@ -46,7 +46,7 @@ def build_controller(
         ),
         verifier=Verifier(
             timeout_seconds=config.verification_timeout_seconds,
-            max_output_bytes=config.max_output_bytes,
+            max_output_bytes=config.max_verification_output_bytes,
             sandbox=CodexSandbox(config.codex_command, codex_home),
         ),
         git_guard=GitGuard(root),
@@ -213,7 +213,11 @@ def run_doctor(root: Path) -> dict[str, object]:
             f"{config.parallel_readers.profile.model}/"
             f"{config.parallel_readers.profile.reasoning_effort}; "
             f"parallel_writers={config.parallel_writers.enabled}/"
-            f"{config.parallel_writers.max_workers}"
+            f"{config.parallel_writers.max_workers}; "
+            f"output_limits={config.max_event_log_bytes}/"
+            f"{config.max_final_payload_bytes}/"
+            f"{config.max_tool_output_bytes}/"
+            f"{config.max_verification_output_bytes}"
         )
     except ValidationError as error:
         config = None

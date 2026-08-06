@@ -21,6 +21,7 @@ from .process import (
 
 TERMINAL_EVENT_TYPES = frozenset({"turn.completed", "turn.failed", "error"})
 HARNESS_CODEX_HOME_ENV = "HARNESS_CODEX_HOME"
+MAX_RAW_EVENT_BYTES = 10_000_000
 
 
 def resolve_harness_codex_home(
@@ -151,7 +152,9 @@ class AgentRunRequest:
     cwd: Path
     event_log: Path
     timeout_seconds: int
-    max_output_bytes: int
+    max_event_log_bytes: int
+    max_final_payload_bytes: int
+    max_tool_output_bytes: int
     model: str
     reasoning_effort: str
     subagents_enabled: bool = False
@@ -168,7 +171,8 @@ class AgentRunResult:
     timed_out: bool
     terminal_event: str | None
     malformed_event_count: int = 0
-    output_truncated: bool = False
+    event_log_truncated: bool = False
+    final_payload_truncated: bool = False
     reader_failed: bool = False
     usage: dict[str, int] = field(default_factory=dict)
 
@@ -180,9 +184,14 @@ class AgentRunResult:
             and self.terminal_event == "turn.completed"
             and self.final_payload is not None
             and self.malformed_event_count == 0
-            and not self.output_truncated
+            and not self.final_payload_truncated
             and not self.reader_failed
         )
+
+    @property
+    def output_truncated(self) -> bool:
+        """Compatibility summary for persisted evidence and older callers."""
+        return self.event_log_truncated or self.final_payload_truncated
 
 
 class AgentRunner(Protocol):
@@ -245,8 +254,10 @@ class CodexRunner:
             "-c",
             "sandbox_workspace_write.network_access=false",
             "-c",
-            'shell_environment_policy.exclude=["CODEX_HOME",'
-            '"HARNESS_CODEX_HOME","OPENAI_API_KEY","CODEX_API_KEY"]',
+            (
+                'shell_environment_policy.exclude=["CODEX_HOME",'
+                '"HARNESS_CODEX_HOME","OPENAI_API_KEY","CODEX_API_KEY"]'
+            ),
             "-c",
             f'model_reasoning_effort="{request.reasoning_effort}"',
             "-c",
@@ -305,7 +316,8 @@ class CodexRunner:
         terminal: str | None = None
         final_payload: dict[str, object] | None = None
         malformed_event_count = 0
-        output_truncated = False
+        event_log_truncated = False
+        final_payload_truncated = False
         reader_failed = False
         usage: dict[str, int] = {}
         try:
@@ -325,7 +337,8 @@ class CodexRunner:
                 args=(
                     process.stdout,
                     event_output_path,
-                    request.max_output_bytes,
+                    request.max_event_log_bytes,
+                    request.max_tool_output_bytes,
                     event_result,
                     reader_errors,
                     self.event_sink,
@@ -336,7 +349,7 @@ class CodexRunner:
                 target=consume_bounded_stream,
                 args=(
                     process.stderr,
-                    request.max_output_bytes,
+                    request.max_event_log_bytes,
                     stderr_result,
                     reader_errors,
                     "stderr",
@@ -359,16 +372,18 @@ class CodexRunner:
             )
             exit_code = process.returncode if process.returncode is not None else 1
             if event_result:
-                terminal, malformed_event_count, output_truncated, usage = event_result[0]
+                terminal, malformed_event_count, event_log_truncated, usage = (
+                    event_result[0]
+                )
             os.replace(event_output_path, request.event_log)
             stderr = stderr_result[0] if stderr_result else ""
             if reader_errors:
                 stderr = "\n".join(value for value in [stderr, *reader_errors] if value)
                 reader_failed = True
             final_payload, final_truncated = self._read_final_payload(
-                final_output_path, request.max_output_bytes
+                final_output_path, request.max_final_payload_bytes
             )
-            output_truncated = output_truncated or final_truncated
+            final_payload_truncated = final_truncated
         except OSError as error:
             stderr = str(error)
             request.event_log.write_text("", encoding="utf-8")
@@ -379,11 +394,12 @@ class CodexRunner:
         return AgentRunResult(
             exit_code=exit_code,
             final_payload=final_payload,
-            stderr=bounded_text(stderr, request.max_output_bytes),
+            stderr=bounded_text(stderr, request.max_event_log_bytes),
             timed_out=timed_out,
             terminal_event=terminal,
             malformed_event_count=malformed_event_count,
-            output_truncated=output_truncated,
+            event_log_truncated=event_log_truncated,
+            final_payload_truncated=final_payload_truncated,
             reader_failed=reader_failed,
             usage=usage,
         )
@@ -415,7 +431,8 @@ class CodexRunner:
 def _consume_event_stream(
     source,
     event_log: Path,
-    max_bytes: int,
+    max_event_log_bytes: int,
+    max_tool_output_bytes: int,
     result: list[tuple[str | None, int, bool, dict[str, int]]],
     errors: list[str],
     event_sink: Callable[[dict[str, object]], None] | None = None,
@@ -429,11 +446,11 @@ def _consume_event_stream(
         with event_log.open("wb") as event_handle:
             line_number = 0
             while True:
-                raw_line = source.readline(max_bytes + 1)
+                raw_line = source.readline(MAX_RAW_EVENT_BYTES + 1)
                 if not raw_line:
                     break
                 line_number += 1
-                if len(raw_line) > max_bytes:
+                if len(raw_line) > MAX_RAW_EVENT_BYTES:
                     truncated = True
                     malformed_count += 1
                     while not raw_line.endswith(b"\n"):
@@ -441,7 +458,7 @@ def _consume_event_stream(
                         if not raw_line:
                             break
                     marker = b'{"type":"harness.output_truncated"}\n'
-                    if written + len(marker) <= max_bytes:
+                    if written + len(marker) <= max_event_log_bytes:
                         event_handle.write(marker)
                         written += len(marker)
                     continue
@@ -461,6 +478,7 @@ def _consume_event_stream(
                 if event.get("type") == "harness.malformed_event":
                     event["line_number"] = line_number
                     malformed_count += 1
+                event = _compact_tool_output(event, max_tool_output_bytes)
                 if event_sink is not None:
                     _publish_event(event_sink, event)
                 encoded = (
@@ -471,10 +489,10 @@ def _consume_event_stream(
                     )
                     + "\n"
                 ).encode("utf-8")
-                if written + len(encoded) > max_bytes:
+                if written + len(encoded) > max_event_log_bytes:
                     if not truncated:
                         marker = b'{"type":"harness.output_truncated"}\n'
-                        if written + len(marker) <= max_bytes:
+                        if written + len(marker) <= max_event_log_bytes:
                             event_handle.write(marker)
                             written += len(marker)
                     truncated = True
@@ -497,6 +515,48 @@ def _consume_event_stream(
         result.append((terminal, malformed_count, truncated, usage))
     except (OSError, ValueError) as error:
         errors.append(f"stdout reader failed: {error}")
+
+
+def _compact_tool_output(
+    event: dict[str, object], max_bytes: int
+) -> dict[str, object]:
+    item = event.get("item")
+    if not isinstance(item, dict) or item.get("type") != "command_execution":
+        return event
+    compact_item = dict(item)
+    changed = False
+    for key in ("aggregated_output", "aggregatedOutput"):
+        value = compact_item.get(key)
+        if not isinstance(value, str):
+            continue
+        original_bytes = len(value.encode("utf-8", errors="replace"))
+        if original_bytes <= max_bytes:
+            continue
+        compact_item[key] = _summarize_text(value, max_bytes, original_bytes)
+        compact_item[f"{key}_truncated"] = True
+        compact_item[f"{key}_original_bytes"] = original_bytes
+        changed = True
+    if not changed:
+        return event
+    compact_event = dict(event)
+    compact_event["item"] = compact_item
+    return compact_event
+
+
+def _summarize_text(text: str, max_bytes: int, original_bytes: int) -> str:
+    encoded = text.encode("utf-8", errors="replace")
+    omitted = max(0, original_bytes - max_bytes)
+    marker = f"\n...[tool output truncated; at least {omitted} bytes omitted]...\n".encode()
+    available = max(0, max_bytes - len(marker))
+    prefix_bytes = available * 2 // 3
+    suffix_bytes = available - prefix_bytes
+    prefix = encoded[:prefix_bytes].decode("utf-8", errors="ignore")
+    suffix = (
+        encoded[-suffix_bytes:].decode("utf-8", errors="ignore")
+        if suffix_bytes
+        else ""
+    )
+    return prefix + marker.decode() + suffix
 
 
 def _publish_event(
