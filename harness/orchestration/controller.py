@@ -89,7 +89,9 @@ class HarnessController:
             cwd=self.root,
             event_log=self.store.evidence_path(run_id, "plan-events.jsonl"),
             timeout_seconds=self.config.timeout_seconds,
-            max_output_bytes=self.config.max_output_bytes,
+            max_event_log_bytes=self.config.max_event_log_bytes,
+            max_final_payload_bytes=self.config.max_final_payload_bytes,
+            max_tool_output_bytes=self.config.max_tool_output_bytes,
             model=self.config.planner.model,
             reasoning_effort=self.config.planner.reasoning_effort,
             subagents_enabled=self.config.parallel_readers.enabled,
@@ -109,6 +111,8 @@ class HarnessController:
                     "terminal_event": result.terminal_event,
                     "malformed_event_count": result.malformed_event_count,
                     "output_truncated": result.output_truncated,
+                    "event_log_truncated": result.event_log_truncated,
+                    "final_payload_truncated": result.final_payload_truncated,
                     "reader_failed": result.reader_failed,
                     "model": request.model,
                     "reasoning_effort": request.reasoning_effort,
@@ -142,6 +146,7 @@ class HarnessController:
                 "model": request.model,
                 "reasoning_effort": request.reasoning_effort,
                 "usage": result.usage,
+                "event_log_truncated": result.event_log_truncated,
             },
         )
         return run_id
@@ -401,7 +406,9 @@ class HarnessController:
                         run_id, f"{step.id}-attempt-{attempt:02d}.jsonl"
                     ),
                     timeout_seconds=self.config.timeout_seconds,
-                    max_output_bytes=self.config.max_output_bytes,
+                    max_event_log_bytes=self.config.max_event_log_bytes,
+                    max_final_payload_bytes=self.config.max_final_payload_bytes,
+                    max_tool_output_bytes=self.config.max_tool_output_bytes,
                     model=self.config.executor.model,
                     reasoning_effort=self.config.executor.reasoning_effort,
                 )
@@ -510,6 +517,11 @@ class HarnessController:
                 "exit_code": outcome.agent_result.exit_code,
                 "terminal_event": outcome.agent_result.terminal_event,
                 "timed_out": outcome.agent_result.timed_out,
+                "output_truncated": outcome.agent_result.output_truncated,
+                "event_log_truncated": outcome.agent_result.event_log_truncated,
+                "final_payload_truncated": (
+                    outcome.agent_result.final_payload_truncated
+                ),
                 "model": self.config.executor.model,
                 "reasoning_effort": self.config.executor.reasoning_effort,
                 "usage": outcome.agent_result.usage,
@@ -567,7 +579,9 @@ class HarnessController:
             cwd=self.root,
             event_log=event_log,
             timeout_seconds=self.config.timeout_seconds,
-            max_output_bytes=self.config.max_output_bytes,
+            max_event_log_bytes=self.config.max_event_log_bytes,
+            max_final_payload_bytes=self.config.max_final_payload_bytes,
+            max_tool_output_bytes=self.config.max_tool_output_bytes,
             model=self.config.reviewer.model,
             reasoning_effort=self.config.reviewer.reasoning_effort,
             subagents_enabled=self.config.parallel_readers.enabled,
@@ -610,6 +624,8 @@ class HarnessController:
                     "model": request.model,
                     "reasoning_effort": request.reasoning_effort,
                     "usage": result.usage,
+                    "event_log_truncated": result.event_log_truncated,
+                    "final_payload_truncated": result.final_payload_truncated,
                     "error": failure,
                 },
             )
@@ -637,6 +653,7 @@ class HarnessController:
                 "model": request.model,
                 "reasoning_effort": request.reasoning_effort,
                 "usage": result.usage,
+                "event_log_truncated": result.event_log_truncated,
                 "result": review.to_dict(),
             },
         )
@@ -646,6 +663,7 @@ class HarnessController:
                 "type": "review.completed",
                 "review": index,
                 "finding_count": len(review.findings),
+                "event_log_truncated": result.event_log_truncated,
             },
         )
         return review
@@ -753,7 +771,9 @@ class HarnessController:
                 run_id, f"{plan_step.id}-attempt-{attempt:02d}.jsonl"
             ),
             timeout_seconds=self.config.timeout_seconds,
-            max_output_bytes=self.config.max_output_bytes,
+            max_event_log_bytes=self.config.max_event_log_bytes,
+            max_final_payload_bytes=self.config.max_final_payload_bytes,
+            max_tool_output_bytes=self.config.max_tool_output_bytes,
             model=self.config.executor.model,
             reasoning_effort=self.config.executor.reasoning_effort,
         )
@@ -781,6 +801,8 @@ class HarnessController:
                 "timed_out": result.timed_out,
                 "malformed_event_count": result.malformed_event_count,
                 "output_truncated": result.output_truncated,
+                "event_log_truncated": result.event_log_truncated,
+                "final_payload_truncated": result.final_payload_truncated,
                 "reader_failed": result.reader_failed,
                 "model": request.model,
                 "reasoning_effort": request.reasoning_effort,

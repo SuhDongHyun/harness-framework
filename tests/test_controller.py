@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,7 +16,9 @@ from harness.storage import RunStore
 from tests.test_models_store import valid_plan
 
 
-def completed_result(summary: str = "done") -> AgentRunResult:
+def completed_result(
+    summary: str = "done", *, event_log_truncated: bool = False
+) -> AgentRunResult:
     return AgentRunResult(
         exit_code=0,
         final_payload={
@@ -29,6 +32,7 @@ def completed_result(summary: str = "done") -> AgentRunResult:
         stderr="",
         timed_out=False,
         terminal_event="turn.completed",
+        event_log_truncated=event_log_truncated,
     )
 
 
@@ -189,7 +193,10 @@ class ControllerTests(unittest.TestCase):
             max_retries=2,
             timeout_seconds=30,
             verification_timeout_seconds=30,
-            max_output_bytes=10_000,
+            max_event_log_bytes=10_000,
+            max_final_payload_bytes=10_000,
+            max_tool_output_bytes=2_000,
+            max_verification_output_bytes=10_000,
             codex_command="codex",
             planner=AgentProfile("planner-model", "high"),
             executor=AgentProfile("executor-model", "xhigh"),
@@ -329,6 +336,24 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual("completed", state.status)
         self.assertEqual(2, state.steps[0]["attempts"])
         self.assertIn("test failed", runner.requests[2].prompt)
+
+    def test_event_log_truncation_does_not_skip_controller_verification(self):
+        controller, _, verifier = self.controller(
+            [plan_result(), completed_result(event_log_truncated=True)],
+            [verification(True), verification(True)],
+        )
+        run_id = controller.plan("Build a small feature")
+        controller.approve(run_id)
+        state = controller.run(run_id)
+        self.assertEqual("completed", state.status)
+        self.assertEqual(2, len(verifier.calls))
+        evidence = json.loads(
+            self.store.evidence_path(
+                run_id, "step-00-attempt-01-agent.json"
+            ).read_text()
+        )
+        self.assertTrue(evidence["event_log_truncated"])
+        self.assertFalse(evidence["final_payload_truncated"])
 
     def test_maximum_retries_fail_run(self):
         controller, _, verifier = self.controller(

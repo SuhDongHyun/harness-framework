@@ -19,7 +19,7 @@ class HarnessConfigTests(unittest.TestCase):
             config.planner.model,
             config.planner.reasoning_effort,
         ))
-        self.assertEqual(("gpt-5.6-luna", "xhigh"), (
+        self.assertEqual(("gpt-5.6-terra", "xhigh"), (
             config.executor.model,
             config.executor.reasoning_effort,
         ))
@@ -29,10 +29,14 @@ class HarnessConfigTests(unittest.TestCase):
         ))
         self.assertTrue(config.parallel_readers.enabled)
         self.assertEqual(3, config.parallel_readers.max_workers)
-        self.assertEqual("gpt-5.6-luna", config.parallel_readers.profile.model)
+        self.assertEqual("gpt-5.6-terra", config.parallel_readers.profile.model)
         self.assertEqual("medium", config.parallel_readers.profile.reasoning_effort)
         self.assertFalse(config.parallel_writers.enabled)
         self.assertEqual(2, config.parallel_writers.max_workers)
+        self.assertEqual(1_000_000, config.max_event_log_bytes)
+        self.assertEqual(200_000, config.max_final_payload_bytes)
+        self.assertEqual(20_000, config.max_tool_output_bytes)
+        self.assertEqual(200_000, config.max_verification_output_bytes)
 
     def test_role_profiles_can_be_overridden_independently(self):
         config = self.load(
@@ -47,7 +51,7 @@ class HarnessConfigTests(unittest.TestCase):
         )
         self.assertEqual("planner-model", config.planner.model)
         self.assertEqual("high", config.planner.reasoning_effort)
-        self.assertEqual("gpt-5.6-luna", config.executor.model)
+        self.assertEqual("gpt-5.6-terra", config.executor.model)
         self.assertEqual("medium", config.executor.reasoning_effort)
         self.assertEqual("reviewer-model", config.reviewer.model)
         self.assertEqual("xhigh", config.reviewer.reasoning_effort)
@@ -81,6 +85,34 @@ class HarnessConfigTests(unittest.TestCase):
         )
         self.assertTrue(config.parallel_writers.enabled)
         self.assertEqual(3, config.parallel_writers.max_workers)
+
+    def test_output_limits_can_be_configured_independently(self):
+        config = self.load(
+            "[harness]\n"
+            "max_event_log_bytes = 500000\n"
+            "max_final_payload_bytes = 100000\n"
+            "max_tool_output_bytes = 10000\n"
+            "max_verification_output_bytes = 300000\n"
+        )
+        self.assertEqual(500_000, config.max_event_log_bytes)
+        self.assertEqual(100_000, config.max_final_payload_bytes)
+        self.assertEqual(10_000, config.max_tool_output_bytes)
+        self.assertEqual(300_000, config.max_verification_output_bytes)
+
+    def test_legacy_output_limit_populates_all_split_limits(self):
+        config = self.load("[harness]\nmax_output_bytes = 4096\n")
+        self.assertEqual(4096, config.max_event_log_bytes)
+        self.assertEqual(4096, config.max_final_payload_bytes)
+        self.assertEqual(4096, config.max_tool_output_bytes)
+        self.assertEqual(4096, config.max_verification_output_bytes)
+
+    def test_legacy_and_split_output_limits_cannot_be_combined(self):
+        with self.assertRaisesRegex(ValidationError, "cannot be combined"):
+            self.load(
+                "[harness]\n"
+                "max_output_bytes = 4096\n"
+                "max_event_log_bytes = 8192\n"
+            )
 
 
 if __name__ == "__main__":

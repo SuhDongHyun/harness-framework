@@ -183,10 +183,70 @@ class CliTests(unittest.TestCase):
                     "harness.cli.codex_login_status",
                     return_value=(True, "logged in"),
                 ),
+                patch(
+                    "harness.cli.codex_available_models",
+                    return_value=(
+                        True,
+                        frozenset({"gpt-5.6-sol", "gpt-5.6-terra"}),
+                        "2 bundled models",
+                    ),
+                ),
             ):
                 report = run_doctor(root)
             which.assert_called_once_with("custom-codex")
             self.assertTrue(report["ok"])
+
+    def test_doctor_reports_unavailable_configured_subagent_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".harness").mkdir()
+            (root / ".harness" / "config.toml").write_text(
+                "[harness]\n"
+                "[harness.parallel_readers]\n"
+                'model = "missing-reader"\n'
+            )
+            (root / "schemas").mkdir()
+            for name in (
+                "plan.schema.json",
+                "step-result.schema.json",
+                "review-result.schema.json",
+                "state.schema.json",
+            ):
+                (root / "schemas" / name).write_text("{}")
+            git_result = type(
+                "Result",
+                (),
+                {"returncode": 0, "stdout": str(root), "stderr": ""},
+            )()
+            with (
+                patch("harness.cli.subprocess.run", return_value=git_result),
+                patch("harness.cli.shutil.which", return_value="/bin/codex"),
+                patch(
+                    "harness.cli.harness_codex_home_status",
+                    return_value=(True, "ready"),
+                ),
+                patch(
+                    "harness.cli.codex_login_status",
+                    return_value=(True, "logged in"),
+                ),
+                patch(
+                    "harness.cli.codex_available_models",
+                    return_value=(
+                        True,
+                        frozenset({"gpt-5.6-sol", "gpt-5.6-terra"}),
+                        "2 bundled models",
+                    ),
+                ),
+            ):
+                report = run_doctor(root)
+            self.assertFalse(report["ok"])
+            model_check = next(
+                check
+                for check in report["checks"]
+                if check["name"] == "Configured models"
+            )
+            self.assertFalse(model_check["ok"])
+            self.assertIn("parallel_readers=missing-reader", model_check["detail"])
 
     def test_doctor_reports_missing_git_without_crashing(self):
         with tempfile.TemporaryDirectory() as tmp:

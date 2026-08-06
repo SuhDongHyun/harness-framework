@@ -26,7 +26,7 @@ class AgentProfile:
 
 
 DEFAULT_PLANNER_PROFILE = AgentProfile("gpt-5.6-sol", "high")
-DEFAULT_EXECUTOR_PROFILE = AgentProfile("gpt-5.6-luna", "xhigh")
+DEFAULT_EXECUTOR_PROFILE = AgentProfile("gpt-5.6-terra", "xhigh")
 DEFAULT_REVIEWER_PROFILE = AgentProfile("gpt-5.6-sol", "high")
 
 
@@ -34,7 +34,7 @@ DEFAULT_REVIEWER_PROFILE = AgentProfile("gpt-5.6-sol", "high")
 class ParallelReaderConfig:
     enabled: bool = True
     max_workers: int = 3
-    profile: AgentProfile = AgentProfile("gpt-5.6-luna", "medium")
+    profile: AgentProfile = AgentProfile("gpt-5.6-terra", "medium")
 
     def validate(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -59,13 +59,21 @@ class ParallelWriterConfig:
 
 DEFAULT_PARALLEL_WRITERS = ParallelWriterConfig()
 
+DEFAULT_MAX_EVENT_LOG_BYTES = 1_000_000
+DEFAULT_MAX_FINAL_PAYLOAD_BYTES = 200_000
+DEFAULT_MAX_TOOL_OUTPUT_BYTES = 20_000
+DEFAULT_MAX_VERIFICATION_OUTPUT_BYTES = 200_000
+
 
 @dataclass(frozen=True)
 class HarnessConfig:
     max_retries: int = 3
     timeout_seconds: int = 1800
     verification_timeout_seconds: int = 900
-    max_output_bytes: int = 200_000
+    max_event_log_bytes: int = DEFAULT_MAX_EVENT_LOG_BYTES
+    max_final_payload_bytes: int = DEFAULT_MAX_FINAL_PAYLOAD_BYTES
+    max_tool_output_bytes: int = DEFAULT_MAX_TOOL_OUTPUT_BYTES
+    max_verification_output_bytes: int = DEFAULT_MAX_VERIFICATION_OUTPUT_BYTES
     codex_command: str = "codex"
     planner: AgentProfile = DEFAULT_PLANNER_PROFILE
     executor: AgentProfile = DEFAULT_EXECUTOR_PROFILE
@@ -86,6 +94,11 @@ class HarnessConfig:
             "max_retries",
             "timeout_seconds",
             "verification_timeout_seconds",
+            "max_event_log_bytes",
+            "max_final_payload_bytes",
+            "max_tool_output_bytes",
+            "max_verification_output_bytes",
+            # Backward-compatible migration path for existing personal configs.
             "max_output_bytes",
             "codex_command",
             "planner",
@@ -97,11 +110,23 @@ class HarnessConfig:
         extra = set(values) - allowed
         if extra:
             raise ValidationError(f"unknown config fields: {', '.join(sorted(extra))}")
+        budget_fields = {
+            "max_event_log_bytes",
+            "max_final_payload_bytes",
+            "max_tool_output_bytes",
+            "max_verification_output_bytes",
+        }
+        legacy_output_bytes = values.get("max_output_bytes")
+        if legacy_output_bytes is not None and budget_fields.intersection(values):
+            raise ValidationError(
+                "max_output_bytes cannot be combined with the split output limits"
+            )
         scalar_values = {
             key: value
             for key, value in values.items()
             if key
             not in {
+                "max_output_bytes",
                 "planner",
                 "executor",
                 "reviewer",
@@ -109,6 +134,15 @@ class HarnessConfig:
                 "parallel_writers",
             }
         }
+        if legacy_output_bytes is not None:
+            scalar_values.update(
+                {
+                    "max_event_log_bytes": legacy_output_bytes,
+                    "max_final_payload_bytes": legacy_output_bytes,
+                    "max_tool_output_bytes": legacy_output_bytes,
+                    "max_verification_output_bytes": legacy_output_bytes,
+                }
+            )
         config = cls(
             **scalar_values,
             planner=_load_profile(
@@ -135,12 +169,17 @@ class HarnessConfig:
             1,
             7200,
         )
-        _bounded_int(
-            self.max_output_bytes,
-            "max_output_bytes",
-            1024,
-            10_000_000,
-        )
+        for label, value in (
+            ("max_event_log_bytes", self.max_event_log_bytes),
+            ("max_final_payload_bytes", self.max_final_payload_bytes),
+            ("max_tool_output_bytes", self.max_tool_output_bytes),
+            ("max_verification_output_bytes", self.max_verification_output_bytes),
+        ):
+            _bounded_int(value, label, 1024, 10_000_000)
+        if self.max_tool_output_bytes > self.max_event_log_bytes:
+            raise ValidationError(
+                "max_tool_output_bytes must not exceed max_event_log_bytes"
+            )
         if not isinstance(self.codex_command, str) or not self.codex_command.strip():
             raise ValidationError("codex_command must be a non-empty string")
         self.planner.validate("planner")

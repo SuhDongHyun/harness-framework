@@ -46,6 +46,15 @@ The workspace profile is not a complete confidentiality boundary for all
 host-readable files, so Acceptance Criteria remain explicit, shell-free,
 user-reviewed argv.
 
+Agent event history, structured final payloads, individual command-tool output,
+and verifier stdout/stderr use independent byte budgets. Oversized command output
+is stored as a bounded head/tail summary with its original byte count. Reaching
+the event-history budget is an audit warning rather than completion evidence:
+the runner still consumes and parses the entire stream, while malformed events,
+reader failures, oversized final payloads, Git guards, and controller-owned
+verification remain authoritative failures. Runtime diagnostics also reject
+configured agent or subagent models absent from the Codex bundled model catalog.
+
 ## Package boundaries
 
 - `harness/domain/` owns validated plans, execution results, reviews, run state,

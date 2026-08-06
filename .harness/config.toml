@@ -3,7 +3,12 @@
 max_retries = 3
 timeout_seconds = 1800
 verification_timeout_seconds = 900
-max_output_bytes = 200000
+# Agent JSONL history, structured final output, individual tool output fields,
+# and controller verification streams have independent evidence budgets.
+max_event_log_bytes = 1000000
+max_final_payload_bytes = 200000
+max_tool_output_bytes = 20000
+max_verification_output_bytes = 200000
 codex_command = "codex"
 
 [harness.planner]
@@ -11,7 +16,7 @@ model = "gpt-5.6-sol"
 reasoning_effort = "high"
 
 [harness.executor]
-model = "gpt-5.6-luna"
+model = "gpt-5.6-terra"
 reasoning_effort = "xhigh"
 
 [harness.reviewer]
@@ -21,7 +26,7 @@ reasoning_effort = "high"
 [harness.parallel_readers]
 enabled = true
 max_workers = 3
-model = "gpt-5.6-luna"
+model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 
 [harness.parallel_writers]

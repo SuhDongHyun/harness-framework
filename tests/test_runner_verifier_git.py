@@ -10,6 +10,7 @@ from harness.agents.runner import (
     AgentRunRequest,
     CodexRunner,
     CodexSandbox,
+    codex_available_models,
     codex_login_status,
     harness_codex_home_status,
     parse_event_stream,
@@ -67,6 +68,28 @@ class RunnerTests(unittest.TestCase):
                 codex_login_status(str(executable), codex_home),
             )
 
+    def test_codex_available_models_reads_bundled_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "assert sys.argv[1:] == ['debug', 'models', '--bundled']\n"
+                "assert os.environ['CODEX_HOME'].endswith('runtime-home')\n"
+                "print(json.dumps({'models': ["
+                "{'slug': 'planner-model'}, {'slug': 'reader-model'}]}))\n"
+            )
+            executable.chmod(0o755)
+            ok, models, detail = codex_available_models(
+                str(executable), root / "runtime-home"
+            )
+            self.assertTrue(ok)
+            self.assertEqual(
+                frozenset({"planner-model", "reader-model"}), models
+            )
+            self.assertEqual("2 bundled models", detail)
+
     def test_build_command_uses_explicit_sandbox_and_schema(self):
         request = AgentRunRequest(
             prompt="Do the step",
@@ -75,7 +98,9 @@ class RunnerTests(unittest.TestCase):
             cwd=Path("/repo"),
             event_log=Path("/repo/events.jsonl"),
             timeout_seconds=30,
-            max_output_bytes=10_000,
+            max_event_log_bytes=10_000,
+            max_final_payload_bytes=10_000,
+            max_tool_output_bytes=2_000,
             model="planner-model",
             reasoning_effort="high",
         )
@@ -96,8 +121,10 @@ class RunnerTests(unittest.TestCase):
                 "-c",
                 "sandbox_workspace_write.network_access=false",
                 "-c",
-                'shell_environment_policy.exclude=["CODEX_HOME",'
-                '"HARNESS_CODEX_HOME","OPENAI_API_KEY","CODEX_API_KEY"]',
+                (
+                    'shell_environment_policy.exclude=["CODEX_HOME",'
+                    '"HARNESS_CODEX_HOME","OPENAI_API_KEY","CODEX_API_KEY"]'
+                ),
                 "-c",
                 'model_reasoning_effort="high"',
                 "-c",
@@ -122,7 +149,9 @@ class RunnerTests(unittest.TestCase):
             cwd=Path("/repo"),
             event_log=Path("/repo/events.jsonl"),
             timeout_seconds=30,
-            max_output_bytes=10_000,
+            max_event_log_bytes=10_000,
+            max_final_payload_bytes=10_000,
+            max_tool_output_bytes=2_000,
             model="reviewer-model",
             reasoning_effort="high",
             subagents_enabled=True,
@@ -184,7 +213,9 @@ class RunnerTests(unittest.TestCase):
                 cwd=root,
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
-                max_output_bytes=10_000,
+                max_event_log_bytes=10_000,
+                max_final_payload_bytes=10_000,
+                max_tool_output_bytes=2_000,
                 model="planner-model",
                 reasoning_effort="high",
             )
@@ -213,7 +244,9 @@ class RunnerTests(unittest.TestCase):
                 cwd=root,
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
-                max_output_bytes=10_000,
+                max_event_log_bytes=10_000,
+                max_final_payload_bytes=10_000,
+                max_tool_output_bytes=2_000,
                 model="planner-model",
                 reasoning_effort="high",
             )
@@ -245,7 +278,9 @@ class RunnerTests(unittest.TestCase):
                 cwd=root,
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
-                max_output_bytes=10_000,
+                max_event_log_bytes=10_000,
+                max_final_payload_bytes=10_000,
+                max_tool_output_bytes=2_000,
                 model="executor-model",
                 reasoning_effort="xhigh",
             )
@@ -281,7 +316,9 @@ class RunnerTests(unittest.TestCase):
                 cwd=root,
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
-                max_output_bytes=10_000,
+                max_event_log_bytes=10_000,
+                max_final_payload_bytes=10_000,
+                max_tool_output_bytes=2_000,
                 model="executor-model",
                 reasoning_effort="xhigh",
             )
@@ -290,7 +327,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(1, result.malformed_event_count)
 
     @unittest.skipIf(sys.platform == "win32", "executable fixture uses a POSIX shebang")
-    def test_event_and_final_output_are_bounded(self):
+    def test_final_payload_has_an_independent_hard_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             executable = root / "fake-codex"
@@ -299,7 +336,6 @@ class RunnerTests(unittest.TestCase):
                 "import json, pathlib, sys\n"
                 "output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
                 "output.write_text(json.dumps({'value': 'x' * 10000}))\n"
-                "print(json.dumps({'type': 'item.completed', 'value': 'x' * 10000}))\n"
                 "print(json.dumps({'type': 'turn.completed'}))\n"
             )
             executable.chmod(0o755)
@@ -312,14 +348,91 @@ class RunnerTests(unittest.TestCase):
                 cwd=root,
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
-                max_output_bytes=256,
+                max_event_log_bytes=10_000,
+                max_final_payload_bytes=256,
+                max_tool_output_bytes=128,
                 model="executor-model",
                 reasoning_effort="xhigh",
             )
             result = CodexRunner(str(executable)).run(request)
             self.assertFalse(result.process_succeeded)
-            self.assertTrue(result.output_truncated)
-            self.assertLess(request.event_log.stat().st_size, 1024)
+            self.assertTrue(result.final_payload_truncated)
+            self.assertFalse(result.event_log_truncated)
+
+    @unittest.skipIf(sys.platform == "win32", "executable fixture uses a POSIX shebang")
+    def test_large_tool_output_is_compacted_before_event_storage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, pathlib, sys\n"
+                "output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
+                "output.write_text(json.dumps({'value': 'ok'}))\n"
+                "print(json.dumps({'type': 'item.completed', 'item': "
+                "{'type': 'command_execution', 'aggregated_output': 'x' * 5000}}))\n"
+                "print(json.dumps({'type': 'turn.completed'}))\n"
+            )
+            executable.chmod(0o755)
+            schema = root / "schema.json"
+            schema.write_text("{}")
+            request = AgentRunRequest(
+                prompt="Do the step",
+                sandbox="workspace-write",
+                output_schema=schema,
+                cwd=root,
+                event_log=root / "events.jsonl",
+                timeout_seconds=5,
+                max_event_log_bytes=1_024,
+                max_final_payload_bytes=1_000,
+                max_tool_output_bytes=256,
+                model="executor-model",
+                reasoning_effort="xhigh",
+            )
+            result = CodexRunner(str(executable)).run(request)
+            self.assertTrue(result.process_succeeded)
+            event = json.loads(request.event_log.read_text().splitlines()[0])
+            item = event["item"]
+            self.assertTrue(item["aggregated_output_truncated"])
+            self.assertEqual(5000, item["aggregated_output_original_bytes"])
+            self.assertLessEqual(len(item["aggregated_output"].encode()), 256)
+
+    @unittest.skipIf(sys.platform == "win32", "executable fixture uses a POSIX shebang")
+    def test_event_log_truncation_is_advisory_when_terminal_payload_is_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, pathlib, sys\n"
+                "output = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])\n"
+                "output.write_text(json.dumps({'value': 'ok'}))\n"
+                "for index in range(20):\n"
+                "    print(json.dumps({'type': 'item.completed', "
+                "'value': str(index) + 'x' * 100}))\n"
+                "print(json.dumps({'type': 'turn.completed'}))\n"
+            )
+            executable.chmod(0o755)
+            schema = root / "schema.json"
+            schema.write_text("{}")
+            request = AgentRunRequest(
+                prompt="Do the step",
+                sandbox="workspace-write",
+                output_schema=schema,
+                cwd=root,
+                event_log=root / "events.jsonl",
+                timeout_seconds=5,
+                max_event_log_bytes=1_024,
+                max_final_payload_bytes=1_024,
+                max_tool_output_bytes=1_024,
+                model="executor-model",
+                reasoning_effort="xhigh",
+            )
+            result = CodexRunner(str(executable)).run(request)
+            self.assertTrue(result.process_succeeded)
+            self.assertTrue(result.event_log_truncated)
+            self.assertFalse(result.final_payload_truncated)
+            self.assertEqual("turn.completed", result.terminal_event)
 
     @unittest.skipIf(sys.platform == "win32", "fixture relies on POSIX process groups")
     def test_descendant_holding_pipe_does_not_block_runner(self):
@@ -344,7 +457,9 @@ class RunnerTests(unittest.TestCase):
                 cwd=root,
                 event_log=root / "events.jsonl",
                 timeout_seconds=5,
-                max_output_bytes=10_000,
+                max_event_log_bytes=10_000,
+                max_final_payload_bytes=10_000,
+                max_tool_output_bytes=2_000,
                 model="executor-model",
                 reasoning_effort="xhigh",
             )
