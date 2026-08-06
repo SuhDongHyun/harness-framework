@@ -170,17 +170,20 @@ host 전체 권한을 부여할 필요가 없습니다.
 | `max_retries` | `3` | 최초 실행을 포함한 단계별 최대 시도 횟수 |
 | `timeout_seconds` | `1800` | Codex 실행 제한 시간(초) |
 | `verification_timeout_seconds` | `900` | 검증 명령별 제한 시간(초) |
-| `max_output_bytes` | `200000` | 프로세스별 보존 출력의 최대 크기 |
+| `max_event_log_bytes` | `1000000` | agent JSONL 이벤트 로그별 보존 한도 |
+| `max_final_payload_bytes` | `200000` | 구조화된 최종 JSON payload 한도 |
+| `max_tool_output_bytes` | `20000` | 개별 command tool 출력 필드의 보존 한도 |
+| `max_verification_output_bytes` | `200000` | 검증 명령의 stdout/stderr별 보존 한도 |
 | `codex_command` | `"codex"` | 실행할 Codex CLI 명령 이름 |
 | `planner.model` | `"gpt-5.6-sol"` | `plan` 호출에 사용할 모델 |
 | `planner.reasoning_effort` | `"high"` | `plan` 호출의 reasoning effort |
-| `executor.model` | `"gpt-5.6-luna"` | 계획 step 실행에 사용할 모델 |
+| `executor.model` | `"gpt-5.6-terra"` | 계획 step 실행에 사용할 모델 |
 | `executor.reasoning_effort` | `"xhigh"` | 계획 step 실행의 reasoning effort |
 | `reviewer.model` | `"gpt-5.6-sol"` | `review` 호출에 사용할 모델 |
 | `reviewer.reasoning_effort` | `"high"` | `review` 호출의 reasoning effort |
 | `parallel_readers.enabled` | `true` | plan/review 읽기 전용 subagent 허용 |
 | `parallel_readers.max_workers` | `3` | 읽기 전용 subagent 동시 실행 제한 |
-| `parallel_readers.model` | `"gpt-5.6-luna"` | reader 모델 |
+| `parallel_readers.model` | `"gpt-5.6-terra"` | reader 모델 |
 | `parallel_readers.reasoning_effort` | `"medium"` | reader reasoning effort |
 | `parallel_writers.enabled` | `false` | 격리형 병렬 writer 활성화 여부 |
 | `parallel_writers.max_workers` | `2` | 병렬 writer 동시 실행 제한 |
@@ -188,6 +191,16 @@ host 전체 권한을 부여할 필요가 없습니다.
 모델 프로필은 역할별 TOML 하위 테이블로 관리합니다. 현재 `planner`와
 `executor`, `reviewer`는 각각 `plan`, `run`, `review`에서 사용합니다. 지원되는 reasoning effort는
 `minimal`, `low`, `medium`, `high`, `xhigh`입니다.
+
+이벤트 로그 한도는 감사 기록의 저장량만 제한합니다. runner는 한도 이후에도 전체
+JSONL 스트림을 읽고 terminal event와 malformed event를 검사하므로, 유효한 최종
+payload와 controller 안전 검사가 있으면 독립 검증을 계속합니다. 개별 command
+출력은 앞뒤 문맥과 원래 byte 수를 남긴 요약으로 저장합니다. 기존
+`max_output_bytes` 설정은 네 한도 모두에 같은 값을 적용하는 마이그레이션 호환
+옵션이며 새 분리 설정과 함께 사용할 수 없습니다.
+
+`doctor`는 Codex CLI의 bundled model catalog를 읽어 planner, executor, reviewer와
+활성화된 parallel reader 모델이 실제 카탈로그에 있는지도 확인합니다.
 
 ## 안전 범위
 
