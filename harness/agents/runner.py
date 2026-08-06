@@ -96,6 +96,47 @@ def codex_login_status(
     return result.returncode == 0, detail or f"exit code {result.returncode}"
 
 
+def codex_available_models(
+    codex_command: str,
+    codex_home: Path,
+    timeout_seconds: int = 10,
+) -> tuple[bool, frozenset[str], str]:
+    """Read the CLI's bundled model catalog without a network refresh."""
+    environment = os.environ.copy()
+    environment["CODEX_HOME"] = str(codex_home)
+    try:
+        result = subprocess.run(
+            [codex_command, "debug", "models", "--bundled"],
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, frozenset(), str(error)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        return False, frozenset(), bounded_text(detail, 1000)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        return False, frozenset(), f"invalid model catalog JSON: {error}"
+    raw_models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(raw_models, list):
+        return False, frozenset(), "model catalog does not contain a models array"
+    models = frozenset(
+        value["slug"]
+        for value in raw_models
+        if isinstance(value, dict)
+        and isinstance(value.get("slug"), str)
+        and value["slug"]
+    )
+    if not models:
+        return False, models, "model catalog contains no model slugs"
+    return True, models, f"{len(models)} bundled models"
+
+
 class CodexSandbox:
     def __init__(self, codex_command: str, codex_home: Path):
         self.codex_command = codex_command

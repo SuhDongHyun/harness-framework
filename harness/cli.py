@@ -15,6 +15,7 @@ from pathlib import Path
 from .agents import (
     CodexRunner,
     CodexSandbox,
+    codex_available_models,
     codex_login_status,
     harness_codex_home_status,
     prepare_harness_codex_home,
@@ -233,6 +234,7 @@ def run_doctor(root: Path) -> dict[str, object]:
             codex_path or f"{codex_command} not found",
         )
     )
+    codex_home: Path | None = None
     try:
         codex_home = resolve_harness_codex_home()
         codex_home_ok, codex_home_detail = harness_codex_home_status(codex_home)
@@ -248,6 +250,40 @@ def run_doctor(root: Path) -> dict[str, object]:
         login_ok = False
         login_detail = "Harness Codex runtime home must be ready first"
     checks.append(_check("Harness Codex login", login_ok, login_detail))
+    if config is not None and codex_path is not None and codex_home_ok:
+        assert codex_home is not None
+        catalog_ok, available_models, catalog_detail = codex_available_models(
+            config.codex_command, codex_home
+        )
+        configured_models = {
+            "planner": config.planner.model,
+            "executor": config.executor.model,
+            "reviewer": config.reviewer.model,
+        }
+        if config.parallel_readers.enabled:
+            configured_models["parallel_readers"] = (
+                config.parallel_readers.profile.model
+            )
+        missing = {
+            role: model
+            for role, model in configured_models.items()
+            if model not in available_models
+        }
+        model_ok = catalog_ok and not missing
+        if not catalog_ok:
+            model_detail = catalog_detail
+        elif missing:
+            model_detail = "unavailable configured models: " + ", ".join(
+                f"{role}={model}" for role, model in sorted(missing.items())
+            )
+        else:
+            model_detail = (
+                f"all configured models available; {catalog_detail}"
+            )
+    else:
+        model_ok = False
+        model_detail = "Codex command, config, and runtime home must be ready first"
+    checks.append(_check("Configured models", model_ok, model_detail))
 
     schema_paths = [
         root / "schemas" / "plan.schema.json",

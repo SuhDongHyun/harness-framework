@@ -26,7 +26,7 @@ class AgentProfile:
 
 
 DEFAULT_PLANNER_PROFILE = AgentProfile("gpt-5.6-sol", "high")
-DEFAULT_EXECUTOR_PROFILE = AgentProfile("gpt-5.6-luna", "xhigh")
+DEFAULT_EXECUTOR_PROFILE = AgentProfile("gpt-5.6-terra", "xhigh")
 DEFAULT_REVIEWER_PROFILE = AgentProfile("gpt-5.6-sol", "high")
 
 
@@ -34,7 +34,7 @@ DEFAULT_REVIEWER_PROFILE = AgentProfile("gpt-5.6-sol", "high")
 class ParallelReaderConfig:
     enabled: bool = True
     max_workers: int = 3
-    profile: AgentProfile = AgentProfile("gpt-5.6-luna", "medium")
+    profile: AgentProfile = AgentProfile("gpt-5.6-terra", "medium")
 
     def validate(self) -> None:
         if not isinstance(self.enabled, bool):

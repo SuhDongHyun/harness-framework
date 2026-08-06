@@ -19,7 +19,7 @@ class HarnessConfigTests(unittest.TestCase):
             config.planner.model,
             config.planner.reasoning_effort,
         ))
-        self.assertEqual(("gpt-5.6-luna", "xhigh"), (
+        self.assertEqual(("gpt-5.6-terra", "xhigh"), (
             config.executor.model,
             config.executor.reasoning_effort,
         ))
@@ -29,7 +29,7 @@ class HarnessConfigTests(unittest.TestCase):
         ))
         self.assertTrue(config.parallel_readers.enabled)
         self.assertEqual(3, config.parallel_readers.max_workers)
-        self.assertEqual("gpt-5.6-luna", config.parallel_readers.profile.model)
+        self.assertEqual("gpt-5.6-terra", config.parallel_readers.profile.model)
         self.assertEqual("medium", config.parallel_readers.profile.reasoning_effort)
         self.assertFalse(config.parallel_writers.enabled)
         self.assertEqual(2, config.parallel_writers.max_workers)
@@ -51,7 +51,7 @@ class HarnessConfigTests(unittest.TestCase):
         )
         self.assertEqual("planner-model", config.planner.model)
         self.assertEqual("high", config.planner.reasoning_effort)
-        self.assertEqual("gpt-5.6-luna", config.executor.model)
+        self.assertEqual("gpt-5.6-terra", config.executor.model)
         self.assertEqual("medium", config.executor.reasoning_effort)
         self.assertEqual("reviewer-model", config.reviewer.model)
         self.assertEqual("xhigh", config.reviewer.reasoning_effort)

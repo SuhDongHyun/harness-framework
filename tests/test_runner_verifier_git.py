@@ -10,6 +10,7 @@ from harness.agents.runner import (
     AgentRunRequest,
     CodexRunner,
     CodexSandbox,
+    codex_available_models,
     codex_login_status,
     harness_codex_home_status,
     parse_event_stream,
@@ -66,6 +67,28 @@ class RunnerTests(unittest.TestCase):
                 (True, str(codex_home)),
                 codex_login_status(str(executable), codex_home),
             )
+
+    def test_codex_available_models_reads_bundled_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "fake-codex"
+            executable.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "assert sys.argv[1:] == ['debug', 'models', '--bundled']\n"
+                "assert os.environ['CODEX_HOME'].endswith('runtime-home')\n"
+                "print(json.dumps({'models': ["
+                "{'slug': 'planner-model'}, {'slug': 'reader-model'}]}))\n"
+            )
+            executable.chmod(0o755)
+            ok, models, detail = codex_available_models(
+                str(executable), root / "runtime-home"
+            )
+            self.assertTrue(ok)
+            self.assertEqual(
+                frozenset({"planner-model", "reader-model"}), models
+            )
+            self.assertEqual("2 bundled models", detail)
 
     def test_build_command_uses_explicit_sandbox_and_schema(self):
         request = AgentRunRequest(
