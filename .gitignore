@@ -3,3 +3,14 @@ __pycache__/
 
 # Personal Codex Harness runtime artifacts
 .harness/runs/
+
+# Local Next.js application artifacts
+/node_modules/
+/.next/
+/out/
+/coverage/
+/playwright-report/
+/test-results/
+/.playwright/
+/playwright/.cache/
+/ms-playwright/
