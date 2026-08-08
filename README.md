@@ -187,10 +187,18 @@ host 전체 권한을 부여할 필요가 없습니다.
 | `parallel_readers.reasoning_effort` | `"medium"` | reader reasoning effort |
 | `parallel_writers.enabled` | `false` | 격리형 병렬 writer 활성화 여부 |
 | `parallel_writers.max_workers` | `2` | 병렬 writer 동시 실행 제한 |
+| `network.executor_enabled` | `false` | 승인된 step의 executor 네트워크 opt-in을 허용하는 전역 스위치 |
 
 모델 프로필은 역할별 TOML 하위 테이블로 관리합니다. 현재 `planner`와
 `executor`, `reviewer`는 각각 `plan`, `run`, `review`에서 사용합니다. 지원되는 reasoning effort는
 `minimal`, `low`, `medium`, `high`, `xhigh`입니다.
+
+Executor 네트워크는 2중 opt-in입니다. 전역 설정
+`harness.network.executor_enabled = true`와 승인된 plan step의
+`network_access: true`가 모두 있어야 해당 step만 네트워크를 사용할 수 있습니다.
+어느 한쪽이라도 없으면 오프라인으로 실행됩니다. Planner, reviewer, controller-owned
+검증 명령은 항상 오프라인입니다. 이 옵션은 목적지 allowlist가 아니므로, 특정
+호스트만 허용하려면 별도의 프록시나 방화벽 정책이 필요합니다.
 
 이벤트 로그 한도는 감사 기록의 저장량만 제한합니다. runner는 한도 이후에도 전체
 JSONL 스트림을 읽고 terminal event와 malformed event를 검사하므로, 유효한 최종

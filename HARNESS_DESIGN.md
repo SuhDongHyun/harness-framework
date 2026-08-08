@@ -31,9 +31,11 @@ changes.
 Nested Codex processes receive the dedicated path as `CODEX_HOME`, run
 ephemerally without user configuration or rules, use `approval_policy=never`,
 and reset `sandbox_workspace_write.writable_roots` to an empty array. Network is
-disabled for inner command execution. The role sandbox remains authoritative:
-planner and reviewer are read-only; executor is workspace-write only in its
-assigned working tree.
+disabled by default. An executor step may enable it only when the approved plan
+declares `network_access: true` for that step and repository configuration sets
+`harness.network.executor_enabled = true`. Either condition being false keeps
+the step offline. Planner and reviewer remain read-only and offline; executor is
+workspace-write only in its assigned working tree.
 
 Controller-owned verification commands run through `codex sandbox` with the
 Linux `:workspace` permission profile, no extra writable roots, and no network.
@@ -54,6 +56,16 @@ the runner still consumes and parses the entire stream, while malformed events,
 reader failures, oversized final payloads, Git guards, and controller-owned
 verification remain authoritative failures. Runtime diagnostics also reject
 configured agent or subagent models absent from the Codex bundled model catalog.
+
+The executor opt-in controls whether outbound network is available to that
+entire executor step; it is not a destination allowlist. Host-specific policy
+such as npm-registry-only access requires an external proxy or firewall. The
+effective network decision is recorded in step events and agent evidence.
+The executor prompt also states that effective decision so an approved network
+step does not fall back to offline-only commands. If an executor nevertheless
+reports missing network approval, or reports an offline-cache failure while
+network is enabled, the controller treats that contradiction as a retryable
+execution failure rather than a terminal blocker.
 
 ## Package boundaries
 

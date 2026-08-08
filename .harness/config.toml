@@ -32,3 +32,7 @@ reasoning_effort = "medium"
 [harness.parallel_writers]
 enabled = false
 max_workers = 2
+
+[harness.network]
+# Network remains disabled unless an approved plan step also requests it.
+executor_enabled = true

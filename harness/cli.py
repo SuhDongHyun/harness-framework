@@ -215,6 +215,7 @@ def run_doctor(root: Path) -> dict[str, object]:
             f"{config.parallel_readers.profile.reasoning_effort}; "
             f"parallel_writers={config.parallel_writers.enabled}/"
             f"{config.parallel_writers.max_workers}; "
+            f"executor_network={config.network.executor_enabled}; "
             f"output_limits={config.max_event_log_bytes}/"
             f"{config.max_final_payload_bytes}/"
             f"{config.max_tool_output_bytes}/"

@@ -34,6 +34,19 @@ class PlanModelTests(unittest.TestCase):
         plan = Plan.from_dict(valid_plan())
         self.assertEqual(valid_plan(), plan.to_dict())
 
+    def test_step_network_opt_in_round_trip(self):
+        payload = valid_plan()
+        payload["steps"][0]["network_access"] = True
+        plan = Plan.from_dict(payload)
+        self.assertTrue(plan.steps[0].network_access)
+        self.assertEqual(payload, plan.to_dict())
+
+    def test_step_network_opt_in_must_be_boolean(self):
+        payload = valid_plan()
+        payload["steps"][0]["network_access"] = "yes"
+        with self.assertRaisesRegex(ValidationError, "network_access must be boolean"):
+            Plan.from_dict(payload)
+
     def test_rejects_path_escape(self):
         payload = valid_plan()
         payload["steps"][0]["read_files"] = ["../secret"]
@@ -113,6 +126,8 @@ class PlanModelTests(unittest.TestCase):
         self.assertIn("## Objective", document)
         self.assertIn("## Allowed paths", document)
         self.assertIn("## Acceptance commands", document)
+        self.assertIn("## Executor network access", document)
+        self.assertIn("Disabled", document)
         self.assertIn("## Forbidden changes", document)
         self.assertIn("Do not add dependencies", document)
 

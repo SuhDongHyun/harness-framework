@@ -64,6 +64,7 @@ class DashboardServerTests(unittest.TestCase):
             "allowed_paths",
             "forbidden_changes",
             "acceptance_commands",
+            "network_access",
             "final_acceptance_commands",
         ):
             self.assertIn(field, javascript)

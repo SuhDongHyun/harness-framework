@@ -59,6 +59,18 @@ class ParallelWriterConfig:
 
 DEFAULT_PARALLEL_WRITERS = ParallelWriterConfig()
 
+
+@dataclass(frozen=True)
+class NetworkConfig:
+    executor_enabled: bool = False
+
+    def validate(self) -> None:
+        if not isinstance(self.executor_enabled, bool):
+            raise ValidationError("network.executor_enabled must be boolean")
+
+
+DEFAULT_NETWORK = NetworkConfig()
+
 DEFAULT_MAX_EVENT_LOG_BYTES = 1_000_000
 DEFAULT_MAX_FINAL_PAYLOAD_BYTES = 200_000
 DEFAULT_MAX_TOOL_OUTPUT_BYTES = 20_000
@@ -80,6 +92,7 @@ class HarnessConfig:
     reviewer: AgentProfile = DEFAULT_REVIEWER_PROFILE
     parallel_readers: ParallelReaderConfig = DEFAULT_PARALLEL_READERS
     parallel_writers: ParallelWriterConfig = DEFAULT_PARALLEL_WRITERS
+    network: NetworkConfig = DEFAULT_NETWORK
 
     @classmethod
     def load(cls, path: Path) -> HarnessConfig:
@@ -106,6 +119,7 @@ class HarnessConfig:
             "reviewer",
             "parallel_readers",
             "parallel_writers",
+            "network",
         }
         extra = set(values) - allowed
         if extra:
@@ -132,6 +146,7 @@ class HarnessConfig:
                 "reviewer",
                 "parallel_readers",
                 "parallel_writers",
+                "network",
             }
         }
         if legacy_output_bytes is not None:
@@ -156,6 +171,7 @@ class HarnessConfig:
             ),
             parallel_readers=_load_parallel_readers(values.get("parallel_readers")),
             parallel_writers=_load_parallel_writers(values.get("parallel_writers")),
+            network=_load_network(values.get("network")),
         )
         config.validate()
         return config
@@ -187,6 +203,7 @@ class HarnessConfig:
         self.reviewer.validate("reviewer")
         self.parallel_readers.validate()
         self.parallel_writers.validate()
+        self.network.validate()
 
 
 def _load_profile(
@@ -244,6 +261,23 @@ def _load_parallel_writers(raw: object) -> ParallelWriterConfig:
     return ParallelWriterConfig(
         enabled=raw.get("enabled", DEFAULT_PARALLEL_WRITERS.enabled),
         max_workers=raw.get("max_workers", DEFAULT_PARALLEL_WRITERS.max_workers),
+    )
+
+
+def _load_network(raw: object) -> NetworkConfig:
+    if raw is None:
+        return DEFAULT_NETWORK
+    if not isinstance(raw, dict):
+        raise ValidationError("network must be a table")
+    extra = set(raw) - {"executor_enabled"}
+    if extra:
+        raise ValidationError(
+            "unknown network fields: " + ", ".join(sorted(extra))
+        )
+    return NetworkConfig(
+        executor_enabled=raw.get(
+            "executor_enabled", DEFAULT_NETWORK.executor_enabled
+        )
     )
 
 

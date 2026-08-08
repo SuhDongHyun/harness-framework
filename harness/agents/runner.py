@@ -198,6 +198,7 @@ class AgentRunRequest:
     max_tool_output_bytes: int
     model: str
     reasoning_effort: str
+    network_access: bool = False
     subagents_enabled: bool = False
     max_subagents: int = 1
     subagent_model: str | None = None
@@ -280,6 +281,8 @@ class CodexRunner:
     ) -> list[str]:
         if request.sandbox not in {"read-only", "workspace-write"}:
             raise ValueError(f"unsupported sandbox: {request.sandbox!r}")
+        if request.network_access and request.sandbox != "workspace-write":
+            raise ValueError("network access is supported only for workspace-write")
         command = [
             self.codex_command,
             "exec",
@@ -293,7 +296,8 @@ class CodexRunner:
             "-c",
             "sandbox_workspace_write.writable_roots=[]",
             "-c",
-            "sandbox_workspace_write.network_access=false",
+            "sandbox_workspace_write.network_access="
+            + ("true" if request.network_access else "false"),
             "-c",
             (
                 'shell_environment_policy.exclude=["CODEX_HOME",'
