@@ -29,6 +29,7 @@ class PlanStep:
     allowed_paths: tuple[str, ...]
     acceptance_commands: tuple[tuple[str, ...], ...]
     forbidden_changes: tuple[str, ...]
+    network_access: bool | None = None
 
     @classmethod
     def from_dict(cls, data: object) -> PlanStep:
@@ -45,8 +46,14 @@ class PlanStep:
                 "acceptance_commands",
                 "forbidden_changes",
             },
-            {"depends_on"},
+            {"depends_on", "network_access"},
         )
+        network_access: bool | None = None
+        if "network_access" in data:
+            raw_network_access = data["network_access"]
+            if not isinstance(raw_network_access, bool):
+                raise ValidationError("network_access must be boolean")
+            network_access = raw_network_access
         acceptance_commands = commands(
             data["acceptance_commands"], "acceptance_commands"
         )
@@ -68,10 +75,11 @@ class PlanStep:
             forbidden_changes=string_tuple(
                 data["forbidden_changes"], "forbidden_changes"
             ),
+            network_access=network_access,
         )
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "id": self.id,
             "name": self.name,
             "depends_on": list(self.depends_on),
@@ -83,6 +91,9 @@ class PlanStep:
             ],
             "forbidden_changes": list(self.forbidden_changes),
         }
+        if self.network_access is not None:
+            payload["network_access"] = self.network_access
+        return payload
 
 
 @dataclass(frozen=True)

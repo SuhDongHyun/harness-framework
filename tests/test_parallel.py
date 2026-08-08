@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from harness.agents import AgentRunResult
-from harness.config import HarnessConfig, ParallelWriterConfig
+from harness.config import HarnessConfig, NetworkConfig, ParallelWriterConfig
 from harness.orchestration import HarnessController
 from harness.safety import GitGuard, VerificationResult
 from harness.storage import RunStore
@@ -14,7 +14,7 @@ from harness.storage import RunStore
 
 def parallel_plan() -> dict[str, object]:
     def step(index: int, path: str) -> dict[str, object]:
-        return {
+        payload = {
             "id": f"step-{index:02d}",
             "name": f"worker-{index}",
             "depends_on": [],
@@ -24,6 +24,9 @@ def parallel_plan() -> dict[str, object]:
             "acceptance_commands": [["python3", "-m", "unittest"]],
             "forbidden_changes": ["Do not touch other files"],
         }
+        if index == 0:
+            payload["network_access"] = True
+        return payload
 
     return {
         "version": 1,
@@ -104,6 +107,7 @@ class ParallelControllerTests(unittest.TestCase):
         config = HarnessConfig(
             max_retries=1,
             parallel_writers=ParallelWriterConfig(enabled=True, max_workers=2),
+            network=NetworkConfig(executor_enabled=True),
         )
         controller = HarnessController(
             root=self.root,
@@ -129,6 +133,15 @@ class ParallelControllerTests(unittest.TestCase):
             ).read_text()
         )
         self.assertTrue(evidence["isolated"])
+        execution_requests = [
+            request for request in runner.requests if request.sandbox == "workspace-write"
+        ]
+        by_step = {
+            "step-00" if "step-00" in request.prompt else "step-01": request
+            for request in execution_requests
+        }
+        self.assertTrue(by_step["step-00"].network_access)
+        self.assertFalse(by_step["step-01"].network_access)
 
 
 if __name__ == "__main__":

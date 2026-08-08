@@ -28,7 +28,10 @@ def planning_prompt(goal: str, parallel_readers: int = 0) -> str:
         "step-00, step-01, and so on. Keep each step focused, list only required "
         "read_files, declare depends_on using only earlier step IDs, constrain "
         "allowed_paths, and express every verification as an argv array without "
-        "shell operators. The output goal field must exactly equal this JSON "
+        "shell operators. Set network_access to false unless an executor step "
+        "genuinely requires outbound network access; set it to true only for "
+        "that step. "
+        "The output goal field must exactly equal this JSON "
         f"string, without paraphrasing: {json.dumps(goal, ensure_ascii=False)}."
         f"{parallel}\n\n"
         f"Goal:\n{goal}"
@@ -52,6 +55,8 @@ def step_document(step: PlanStep) -> str:
         + "\n".join(f"- `{path}`" for path in step.allowed_paths)
         + "\n\n## Acceptance commands\n\n"
         + (commands or "- None")
+        + "\n\n## Executor network access\n\n"
+        + ("- Requested" if step.network_access is True else "- Disabled")
         + "\n\n## Forbidden changes\n\n"
         + (forbidden or "- None")
         + "\n"

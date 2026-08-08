@@ -41,7 +41,8 @@
           "read_files",
           "allowed_paths",
           "acceptance_commands",
-          "forbidden_changes"
+          "forbidden_changes",
+          "network_access"
         ],
         "properties": {
           "id": {
@@ -78,6 +79,10 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "network_access": {
+            "type": "boolean",
+            "default": false
           }
         }
       }

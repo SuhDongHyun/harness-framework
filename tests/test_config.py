@@ -33,6 +33,7 @@ class HarnessConfigTests(unittest.TestCase):
         self.assertEqual("medium", config.parallel_readers.profile.reasoning_effort)
         self.assertFalse(config.parallel_writers.enabled)
         self.assertEqual(2, config.parallel_writers.max_workers)
+        self.assertFalse(config.network.executor_enabled)
         self.assertEqual(1_000_000, config.max_event_log_bytes)
         self.assertEqual(200_000, config.max_final_payload_bytes)
         self.assertEqual(20_000, config.max_tool_output_bytes)
@@ -85,6 +86,24 @@ class HarnessConfigTests(unittest.TestCase):
         )
         self.assertTrue(config.parallel_writers.enabled)
         self.assertEqual(3, config.parallel_writers.max_workers)
+
+    def test_executor_network_can_be_enabled(self):
+        config = self.load(
+            "[harness.network]\n"
+            "executor_enabled = true\n"
+        )
+        self.assertTrue(config.network.executor_enabled)
+
+    def test_executor_network_must_be_boolean(self):
+        with self.assertRaisesRegex(ValidationError, "must be boolean"):
+            self.load(
+                "[harness.network]\n"
+                'executor_enabled = "yes"\n'
+            )
+
+    def test_rejects_unknown_network_field(self):
+        with self.assertRaisesRegex(ValidationError, "unknown network fields"):
+            self.load("[harness.network]\nunknown = true\n")
 
     def test_output_limits_can_be_configured_independently(self):
         config = self.load(

@@ -1,10 +1,11 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from harness.agents import AgentRunResult
-from harness.config import AgentProfile, HarnessConfig
+from harness.config import AgentProfile, HarnessConfig, NetworkConfig
 from harness.orchestration import HarnessController, HarnessError
 from harness.orchestration.planning import default_run_id
 from harness.safety import GitSnapshot
@@ -53,16 +54,21 @@ def failed_result(message: str = "implementation failed") -> AgentRunResult:
     )
 
 
-def blocked_result() -> AgentRunResult:
+def blocked_result(
+    *,
+    reason: str = "API credential missing",
+    required_action: str = "Provide the credential",
+    error_message: str | None = None,
+) -> AgentRunResult:
     return AgentRunResult(
         exit_code=0,
         final_payload={
             "outcome": "blocked",
             "summary": "",
             "changed_files": [],
-            "error_message": None,
-            "blocked_reason": "API credential missing",
-            "required_action": "Provide the credential",
+            "error_message": error_message,
+            "blocked_reason": reason,
+            "required_action": required_action,
         },
         stderr="",
         timed_out=False,
@@ -70,10 +76,13 @@ def blocked_result() -> AgentRunResult:
     )
 
 
-def plan_result() -> AgentRunResult:
+def plan_result(*, network_access: bool | None = None) -> AgentRunResult:
+    payload = valid_plan()
+    if network_access is not None:
+        payload["steps"][0]["network_access"] = network_access
     return AgentRunResult(
         exit_code=0,
-        final_payload=valid_plan(),
+        final_payload=payload,
         stderr="",
         timed_out=False,
         terminal_event="turn.completed",
@@ -242,6 +251,57 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNotNone(state.plan_sha256)
         self.assertEqual("git-base", state.approved_git_fingerprint)
 
+    def test_approve_rejects_network_step_when_policy_is_disabled(self):
+        controller, _, _ = self.controller([plan_result(network_access=True)])
+        run_id = controller.plan("Build a small feature")
+        with self.assertRaisesRegex(HarnessError, "executor network access"):
+            controller.approve(run_id)
+        self.assertEqual("draft", controller.status(run_id).status)
+
+    def test_enabled_policy_and_step_opt_in_enable_executor_network(self):
+        self.config = replace(
+            self.config,
+            network=NetworkConfig(executor_enabled=True),
+        )
+        controller, runner, _ = self.controller(
+            [plan_result(network_access=True), completed_result()],
+            [verification(True), verification(True)],
+        )
+        run_id = controller.plan("Build a small feature")
+        controller.approve(run_id)
+        state = controller.run(run_id)
+        self.assertEqual("completed", state.status)
+        self.assertFalse(runner.requests[0].network_access)
+        self.assertTrue(runner.requests[1].network_access)
+        self.assertIn(
+            "Effective executor network access: ENABLED",
+            runner.requests[1].prompt,
+        )
+        self.assertIn(
+            "Outbound network use is approved",
+            runner.requests[1].prompt,
+        )
+        evidence = json.loads(
+            self.store.evidence_path(
+                run_id, "step-00-attempt-01-agent.json"
+            ).read_text()
+        )
+        self.assertTrue(evidence["network_access"])
+
+    def test_global_policy_does_not_enable_unrequested_step_network(self):
+        self.config = replace(
+            self.config,
+            network=NetworkConfig(executor_enabled=True),
+        )
+        controller, runner, _ = self.controller(
+            [plan_result(), completed_result()],
+            [verification(True), verification(True)],
+        )
+        run_id = controller.plan("Build a small feature")
+        controller.approve(run_id)
+        controller.run(run_id)
+        self.assertFalse(runner.requests[1].network_access)
+
     def test_review_uses_reviewer_profile_without_changing_state(self):
         controller, runner, _ = self.controller([plan_result(), review_result()])
         run_id = controller.plan("Build a small feature")
@@ -373,6 +433,58 @@ class ControllerTests(unittest.TestCase):
         state = controller.run(run_id)
         self.assertEqual("blocked", state.status)
         self.assertEqual("API credential missing", state.blocked_reason)
+        self.assertEqual(0, len(verifier.calls))
+
+    def test_contradictory_network_blocker_retries_instead_of_blocking(self):
+        self.config = replace(
+            self.config,
+            network=NetworkConfig(executor_enabled=True),
+        )
+        controller, runner, verifier = self.controller(
+            [
+                plan_result(network_access=True),
+                blocked_result(
+                    reason=(
+                        "This step did not grant explicit network_access: true "
+                        "approval"
+                    ),
+                    required_action="Approve network access and rerun",
+                    error_message="npm --offline failed with ENOTCACHED",
+                ),
+                completed_result(),
+            ],
+            [verification(True), verification(True)],
+        )
+        run_id = controller.plan("Build a small feature")
+        controller.approve(run_id)
+        state = controller.run(run_id)
+        self.assertEqual("completed", state.status)
+        self.assertEqual(2, state.steps[0]["attempts"])
+        self.assertEqual(2, len(verifier.calls))
+        self.assertIn(
+            "contradicted by controller-owned effective network_access=true",
+            runner.requests[2].prompt,
+        )
+
+    def test_external_credential_blocker_still_blocks_with_network_enabled(self):
+        self.config = replace(
+            self.config,
+            network=NetworkConfig(executor_enabled=True),
+        )
+        controller, _, verifier = self.controller(
+            [
+                plan_result(network_access=True),
+                blocked_result(
+                    reason="Private registry credential missing",
+                    required_action="Provide the registry credential",
+                ),
+            ]
+        )
+        run_id = controller.plan("Build a small feature")
+        controller.approve(run_id)
+        state = controller.run(run_id)
+        self.assertEqual("blocked", state.status)
+        self.assertEqual("Private registry credential missing", state.blocked_reason)
         self.assertEqual(0, len(verifier.calls))
 
     def test_out_of_scope_change_fails_run(self):

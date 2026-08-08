@@ -32,7 +32,12 @@ from .parallel import (
 )
 from .planning import default_run_id, planning_prompt, step_document
 from .reviewing import changed_keys, next_review_index, review_prompt
-from .sequential import agent_failure, execution_prompt, parse_step_result
+from .sequential import (
+    agent_failure,
+    contradictory_network_blocker,
+    execution_prompt,
+    parse_step_result,
+)
 
 
 class HarnessError(RuntimeError):
@@ -156,6 +161,13 @@ class HarnessController:
         state = self.status(run_id)
         if plan.status != "draft" or state.status != "draft":
             raise HarnessError("only a draft plan can be approved")
+        network_steps = [step.id for step in plan.steps if step.network_access is True]
+        if network_steps and not self.config.network.executor_enabled:
+            raise HarnessError(
+                "plan requests executor network access for "
+                + ", ".join(network_steps)
+                + "; enable harness.network.executor_enabled before approval"
+            )
         approved_plan = plan.with_status("approved")
         snapshot = self.git_guard.snapshot()
         self.store.clear_step_documents(run_id)
@@ -259,6 +271,7 @@ class HarnessController:
                         "isolated": True,
                         "model": self.config.executor.model,
                         "reasoning_effort": self.config.executor.reasoning_effort,
+                        "network_access": self._executor_network_access(step),
                     },
                 )
             self._write_state(state)
@@ -395,9 +408,13 @@ class HarnessController:
             latest_result = failed_agent_result("agent did not run")
             for attempt in range(1, self.config.max_retries + 1):
                 before = guard.snapshot()
+                network_access = self._executor_network_access(step)
                 request = AgentRunRequest(
                     prompt=execution_prompt(
-                        step, previous_summaries, last_error
+                        step,
+                        previous_summaries,
+                        last_error,
+                        network_access=network_access,
                     ),
                     sandbox="workspace-write",
                     output_schema=self.paths.step_result_schema,
@@ -411,6 +428,7 @@ class HarnessController:
                     max_tool_output_bytes=self.config.max_tool_output_bytes,
                     model=self.config.executor.model,
                     reasoning_effort=self.config.executor.reasoning_effort,
+                    network_access=network_access,
                 )
                 latest_result = self.runner.run(request)
                 after = guard.snapshot()
@@ -431,9 +449,14 @@ class HarnessController:
                 if parse_error is not None:
                     last_error = parse_error
                 elif parsed is not None and parsed.outcome == "blocked":
-                    return IsolatedStepOutcome(
-                        step, attempt, latest_result, parsed, None, (), None
+                    blocker_error = contradictory_network_blocker(
+                        parsed, network_access=network_access
                     )
+                    if blocker_error is None:
+                        return IsolatedStepOutcome(
+                            step, attempt, latest_result, parsed, None, (), None
+                        )
+                    last_error = blocker_error
                 elif parsed is not None and parsed.outcome == "failed":
                     last_error = parsed.error_message or "Codex reported failure"
                 elif parsed is not None:
@@ -524,6 +547,7 @@ class HarnessController:
                 ),
                 "model": self.config.executor.model,
                 "reasoning_effort": self.config.executor.reasoning_effort,
+                "network_access": self._executor_network_access(outcome.step),
                 "usage": outcome.agent_result.usage,
                 "stderr": outcome.agent_result.stderr,
                 "final_payload": outcome.agent_result.final_payload,
@@ -652,6 +676,7 @@ class HarnessController:
             {
                 "model": request.model,
                 "reasoning_effort": request.reasoning_effort,
+                "network_access": request.network_access,
                 "usage": result.usage,
                 "event_log_truncated": result.event_log_truncated,
                 "result": review.to_dict(),
@@ -689,6 +714,7 @@ class HarnessController:
                     "attempt": attempt,
                     "model": self.config.executor.model,
                     "reasoning_effort": self.config.executor.reasoning_effort,
+                    "network_access": self._executor_network_access(plan_step),
                 },
             )
 
@@ -702,7 +728,13 @@ class HarnessController:
             if parse_error is not None:
                 last_error = parse_error
             elif parsed is not None and parsed.outcome == "blocked":
-                return self._block_step(state, state_step, parsed)
+                blocker_error = contradictory_network_blocker(
+                    parsed,
+                    network_access=self._executor_network_access(plan_step),
+                )
+                if blocker_error is None:
+                    return self._block_step(state, state_step, parsed)
+                last_error = blocker_error
             elif parsed is not None and parsed.outcome == "failed":
                 last_error = parsed.error_message or "Codex reported failure"
             elif parsed is not None:
@@ -762,8 +794,14 @@ class HarnessController:
     ) -> tuple[AgentRunResult, str | None]:
         before = self.git_guard.snapshot()
         run_files = self.store.capture_runs_files()
+        network_access = self._executor_network_access(plan_step)
         request = AgentRunRequest(
-            prompt=execution_prompt(plan_step, previous_summaries, last_error),
+            prompt=execution_prompt(
+                plan_step,
+                previous_summaries,
+                last_error,
+                network_access=network_access,
+            ),
             sandbox="workspace-write",
             output_schema=self.paths.step_result_schema,
             cwd=self.root,
@@ -776,6 +814,7 @@ class HarnessController:
             max_tool_output_bytes=self.config.max_tool_output_bytes,
             model=self.config.executor.model,
             reasoning_effort=self.config.executor.reasoning_effort,
+            network_access=network_access,
         )
         result = self.runner.run(request)
         after = self.git_guard.snapshot()
@@ -806,6 +845,7 @@ class HarnessController:
                 "reader_failed": result.reader_failed,
                 "model": request.model,
                 "reasoning_effort": request.reasoning_effort,
+                "network_access": request.network_access,
                 "usage": result.usage,
                 "stderr": result.stderr,
                 "final_payload": result.final_payload,
@@ -831,6 +871,12 @@ class HarnessController:
                     sorted(outside)
                 )
         return result, safety_error
+
+    def _executor_network_access(self, plan_step: PlanStep) -> bool:
+        return (
+            self.config.network.executor_enabled
+            and plan_step.network_access is True
+        )
 
     def _block_step(
         self,

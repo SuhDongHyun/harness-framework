@@ -158,6 +158,11 @@ function renderPlan(data) {
     appendPlanList(fields, "ALLOWED PATHS", step.allowed_paths);
     appendPlanList(fields, "FORBIDDEN CHANGES", step.forbidden_changes);
     appendPlanList(fields, "ACCEPTANCE COMMANDS", step.acceptance_commands, true);
+    appendPlanList(
+      fields,
+      "EXECUTOR NETWORK",
+      [step.network_access === true ? "ENABLED" : "DISABLED"],
+    );
     body.append(objective, fields);
     details.append(summary, body);
     stepsNode.append(details);

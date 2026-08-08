@@ -169,6 +169,47 @@ class RunnerTests(unittest.TestCase):
             'agents.default_subagent_reasoning_effort="medium"', command
         )
 
+    def test_build_command_can_enable_executor_network(self):
+        request = AgentRunRequest(
+            prompt="Install dependencies",
+            sandbox="workspace-write",
+            output_schema=Path("/repo/schema.json"),
+            cwd=Path("/repo"),
+            event_log=Path("/repo/events.jsonl"),
+            timeout_seconds=30,
+            max_event_log_bytes=10_000,
+            max_final_payload_bytes=10_000,
+            max_tool_output_bytes=2_000,
+            model="executor-model",
+            reasoning_effort="high",
+            network_access=True,
+        )
+        command = CodexRunner("codex").build_command(
+            request, Path("/repo/final.json")
+        )
+        self.assertIn("sandbox_workspace_write.network_access=true", command)
+        self.assertNotIn("sandbox_workspace_write.network_access=false", command)
+
+    def test_read_only_request_cannot_enable_network(self):
+        request = AgentRunRequest(
+            prompt="Plan",
+            sandbox="read-only",
+            output_schema=Path("/repo/schema.json"),
+            cwd=Path("/repo"),
+            event_log=Path("/repo/events.jsonl"),
+            timeout_seconds=30,
+            max_event_log_bytes=10_000,
+            max_final_payload_bytes=10_000,
+            max_tool_output_bytes=2_000,
+            model="planner-model",
+            reasoning_effort="high",
+            network_access=True,
+        )
+        with self.assertRaisesRegex(ValueError, "only for workspace-write"):
+            CodexRunner("codex").build_command(
+                request, Path("/repo/final.json")
+            )
+
     def test_parse_event_stream_finds_terminal_event_and_malformed_line(self):
         raw = "\n".join(
             [

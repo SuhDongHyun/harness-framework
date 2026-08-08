@@ -16,6 +16,10 @@ evidence.
   them automatically.
 - Keep execution inside each plan step's `allowed_paths`; never modify `.git` or
   controller-owned `.harness/runs` metadata.
+- Keep network disabled by default. Only an approved step with
+  `network_access: true` may enable executor network access, and only when the
+  repository-level network policy also permits it. Planner, reviewer, and
+  controller-owned verification remain offline.
 - Keep sequential execution as the default. Parallel writers must remain
   explicit opt-in, dependency-aware, path-disjoint, and isolated from the real
   working tree until controller-owned verification passes.
